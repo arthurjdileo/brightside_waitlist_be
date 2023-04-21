@@ -5,6 +5,11 @@ const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 admin.initializeApp();
 
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+const twilio = require('twilio')(accountSid, authToken);
+
 const { v4: uuidv4 } = require('uuid');
 
 // Take the text parameter passed to this HTTP endpoint and insert it into 
@@ -56,6 +61,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			}
 			const patientData = patientDoc.data();
 			console.log(patientData);
+			console.log(patientData.tn);
 	
 			// get clinician data from Firestore
 			const clinicianDoc = await admin.firestore().collection('clinicians').doc(clinician).get();
@@ -66,13 +72,22 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			const clinicianData = clinicianDoc.data();
 	
 			// invoke Twilio and get sid
+			// check tn
+			let exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
+				.executions
+				.create({to: "+17328228510", from: "+18448291335", parameters: {
+					Body: "Reply 'Y' to accept appt. Reply 'N' to decline."
+				}})
+			console.log(exec.sid);
 	
 			// store in db
 			const res = await admin.firestore().collection('notifies').doc(notifyId).set({
 				notifyId: notifyId,
 				patientName: patientData.firstName + " " + patientData.lastName,
+				patientId: patient,
 				tn: patientData.tn,
 				clinician: clinicianData.firstName + " " + clinicianData.lastName,
+				clinicianId: clinician,
 				appt: apptSlot,
 				sid: null,
 				ts: new Date().getTime()
