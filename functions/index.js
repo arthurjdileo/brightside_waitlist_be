@@ -72,11 +72,13 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			// check tn
 			let exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
 				.executions
-				.create({to: "+17328228510", from: "+18448291335", parameters: {
+				.create({to: patientData.tn, from: "+18448291335", parameters: {
 					Body: "Reply 'Y' to accept appt. Reply 'N' to decline.",
 					NotifyId: notifyId,
 					patientId: patient
 				}})
+			console.log(exec);
+			console.log(`Sending notify to ${patientData.tn}: ${patientData.firstName} ${patientData.lastName}`);
 	
 			// store in db
 			await admin.firestore().collection('notifies').doc(`${notifyId}_${patient}`).set({
@@ -151,7 +153,6 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 		return;
 	}
 
-	console.log(req.body.tn, req.body.NotifyId, req.body.patientId);
 	// has notify been satisfied?
 	// check history: notify ID, fulfilled
 	const historyDoc = await admin.firestore().collection('history').doc(req.body.NotifyId).get();
@@ -163,20 +164,14 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	console.log(historyData)
 
 	// if fulfilled, send rejection
-	if (historyData.fulfilled) {
+	if (historyData?.fulfilled) {
 		// send reject
 		res.status(208).json({'success': false});
 		return;
 	}
 
-	const patientDoc = await admin.firestore().collection('patients').doc(req.body.patientId).get();
-	if (!patientDoc.exists) {
-		console.log(`Error: Patient ${patient} not found in Firestore`);
-	}
-	const patientData = patientDoc.data();
-
 	// if fcfs, mark history as fulfilled
-	await admin.firestore().collection('history').doc(notifyId).update({
+	await admin.firestore().collection('history').doc(req.body.NotifyId).update({
 		fulfilled: true,
 		patientId: req.body.patientId,
 		isLoaded: false,
