@@ -49,6 +49,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	const clinician = data.clinician;
 	const apptSlot = new Date(data.appt);
 	if (new Date().getTime() > apptSlot.getTime()) {
+		console.error("Invalid time!", apptSlot.getTime(), new Date().getTime());
 		return {'success': false, 'error': 'Invalid date.'};
 	}
 
@@ -68,7 +69,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			// get patient data from Firestore
 			const patientDoc = await admin.firestore().collection('patients').doc(patient).get();
 			if (!patientDoc.exists) {
-				console.log(`Error: Patient ${patient} not found in Firestore`);
+				console.error(`Error: Patient ${patient} not found in Firestore`);
 				continue;
 			}
 			const patientData = patientDoc.data();
@@ -77,23 +78,20 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			// check tn
 			let exec;
 			let hasErr = false;
-			const msgBody = `${patientData.firstName},
-			An appointment on ${apptSlot.toLocaleDateString('en-US', timeOptions)} with ${clinicianData.firstName} ${clinician.lastName} has been made available. If you wish to claim this appointment, reply 'Y'.
-			Thank you,
-			Brightside Counseling
-			`
+			// const msgBody = `${patientData.firstName},\nAn appointment on ${apptSlot.toLocaleDateString('en-US', timeOptions)} with ${clinicianData.firstName} ${clinicianData.lastName} has been made available.\nIf you wish to claim this appointment, reply 'Y'.\n\nThank you,\nBrightside Counseling`;
+			const msgBody = patientData.firstName+",\n\nAn appointment on "+apptSlot.toLocaleDateString('en-US', timeOptions)+" with "+clinicianData.firstName+" "+clinicianData.lastName+" has been made available.\n\nIf you wish to claim this appointment, reply 'Y'.\n\nThank you,\nBrightside Counseling";
+			console.log(msgBody);
 			try {
 				exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
 					.executions
 					.create({to: patientData.tn, from: "+18448291335", parameters: {
-						Body: "Reply 'Y' to accept appt. Reply 'N' to decline.",
+						Body: msgBody,
 						NotifyId: notifyId,
 						patientId: patient
 					}})
-				console.log(exec);
 				console.log(`Sending notify to ${patientData.tn}: ${patientData.firstName} ${patientData.lastName}`);
 			} catch (err) {
-				console.log("Twilio Error: ", err);
+				console.error("Twilio Error: ", err);
 				hasErr = true;
 			}
 	
@@ -113,7 +111,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			console.log(`Notify record added for patient ${patient}`);
 	
 		} catch(e) {
-			console.log(`Error: ${e}`);
+			console.error(`Error: ${e}`);
 			continue;
 		}
 	}
@@ -148,14 +146,14 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
     
 	const authHeader = req.get("Authorization");
 	if (!authHeader) {
-	  console.log("no header");
+	  console.error("no header");
 	  res.status(401).send('');
 	  return;
 	}
   
 	const [authType, credentials] = authHeader.split(' ');
 	if (authType.toLowerCase() !== 'basic') {
-		console.log("no basic");
+		console.error("no basic");
 		res.status(401).send('');
 	  	return;
 	}
@@ -166,7 +164,7 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	  .split(':');
   
 	if (username !== USERNAME || password !== PASSWORD) {
-		console.log("incorrect", username, password);
+		console.error("incorrect", username, password);
 		res.status(401).json({"success": false});
 		return;
 	}
@@ -175,7 +173,7 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	// check history: notify ID, fulfilled
 	const historyDoc = await admin.firestore().collection('history').doc(req.body.NotifyId).get();
 	if (!historyDoc.exists) {
-		console.log(`Error: History ${req.body.NotifyId} not found in Firestore`);
+		console.error(`Error: History ${req.body.NotifyId} not found in Firestore`);
 	}
 	const historyData = historyDoc.data();
 
