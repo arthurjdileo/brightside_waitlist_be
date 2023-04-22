@@ -79,7 +79,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 				}})
 	
 			// store in db
-			await admin.firestore().collection('notifies').doc(notifyId).set({
+			await admin.firestore().collection('notifies').doc(`${notifyId}_${patient}`).set({
 				notifyId: notifyId,
 				patientName: patientData.firstName + " " + patientData.lastName,
 				patientId: patient,
@@ -127,7 +127,6 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	const PASSWORD = process.env.PASSWORD;
     
 	const authHeader = req.get("Authorization");
-	console.log(authHeader)
 	if (!authHeader) {
 	  console.log("no header");
 	  res.status(401).send('');
@@ -135,7 +134,6 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	}
   
 	const [authType, credentials] = authHeader.split(' ');
-	console.log(authType, credentials);
 	if (authType.toLowerCase() !== 'basic') {
 		console.log("no basic");
 		res.status(401).send('');
@@ -162,9 +160,12 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	}
 	const historyData = historyDoc.data();
 
+	console.log(historyData)
+
 	// if fulfilled, send rejection
-	if (fulfilled) {
+	if (historyData.fulfilled) {
 		// send reject
+		res.status(208).json({'success': false});
 		return;
 	}
 
@@ -182,33 +183,15 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	})
 
 	// remove notifies from db
-	await admin.firestore().collection("notifies").
+	let notifies = await admin.firestore().collection("notifies").where('notifyId', '==', req.body.NotifyId).get();
+	notifies.forEach(async (doc) => {
+		await admin.firestore().collection("notifies").doc(doc.id).update({
+			fulfilled: true
+		});
+	});
+
 	// cancel exec ctx
+
+	res.status(200).json({'success': true});
 	// add entry to appts db with patient ID, appt datetime, clinician
 })
-
-
-// exports.handler = function(context, event, callback) {
-// 	// Here's an example of setting up some TWiML to respond to with this function
-
-	
-  
-// 	// This callback is what is returned in response to this function being invoked.
-// 	// It's really important! E.g. you might respond with TWiML here for a voice or SMS response.
-// 	// Or you might return JSON data to a studio flow. Don't forget it!
-// 	return callback(null, twiml);
-//   };
-  
-//   // Helper method to format the response as a 401 Unauthorized response
-//   // with the appropriate headers and values
-//   const setUnauthorized = (response) => {
-// 	response
-// 	  .setBody('Unauthorized')
-// 	  .setStatusCode(401)
-// 	  .appendHeader(
-// 		'WWW-Authenticate',
-// 		'Basic realm="Authentication Required"'
-// 	  );
-  
-// 	return response;
-//   };
