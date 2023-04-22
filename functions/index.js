@@ -13,6 +13,8 @@ const twilio = require('twilio')(accountSid, authToken);
 
 const { v4: uuidv4 } = require('uuid');
 
+const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric'};
+
 // Take the text parameter passed to this HTTP endpoint and insert it into 
 // Firestore under the path /messages/:documentId/original
 exports.addMessage = functions.https.onCall(async (data, ctx) => {
@@ -45,7 +47,10 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	// appt datetime
 	const patients = data.patients;
 	const clinician = data.clinician;
-	const apptSlot = data.appt;
+	const apptSlot = new Date(data.appt);
+	if (new Date().getTime() > apptSlot.getTime()) {
+		return {'success': false, 'error': 'Invalid date.'};
+	}
 
 	// assign it an ID
 	const notifyId = uuidv4();
@@ -70,15 +75,27 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	
 			// invoke Twilio and get sid
 			// check tn
-			let exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
-				.executions
-				.create({to: patientData.tn, from: "+18448291335", parameters: {
-					Body: "Reply 'Y' to accept appt. Reply 'N' to decline.",
-					NotifyId: notifyId,
-					patientId: patient
-				}})
-			console.log(exec);
-			console.log(`Sending notify to ${patientData.tn}: ${patientData.firstName} ${patientData.lastName}`);
+			let exec;
+			let hasErr = false;
+			const msgBody = `${patientData.firstName},
+			An appointment on ${apptSlot.toLocaleDateString('en-US', timeOptions)} with ${clinicianData.firstName} ${clinician.lastName} has been made available. If you wish to claim this appointment, reply 'Y'.
+			Thank you,
+			Brightside Counseling
+			`
+			try {
+				exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
+					.executions
+					.create({to: patientData.tn, from: "+18448291335", parameters: {
+						Body: "Reply 'Y' to accept appt. Reply 'N' to decline.",
+						NotifyId: notifyId,
+						patientId: patient
+					}})
+				console.log(exec);
+				console.log(`Sending notify to ${patientData.tn}: ${patientData.firstName} ${patientData.lastName}`);
+			} catch (err) {
+				console.log("Twilio Error: ", err);
+				hasErr = true;
+			}
 	
 			// store in db
 			await admin.firestore().collection('notifies').doc(`${notifyId}_${patient}`).set({
@@ -90,7 +107,8 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 				clinicianId: clinician,
 				appt: apptSlot,
 				sid: exec.sid,
-				ts: new Date().getTime()
+				ts: new Date().getTime(),
+				status: !hasErr ? 'sent' : 'failed'
 			});
 			console.log(`Notify record added for patient ${patient}`);
 	
@@ -161,8 +179,6 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	}
 	const historyData = historyDoc.data();
 
-	console.log(historyData)
-
 	// if fulfilled, send rejection
 	if (historyData?.fulfilled) {
 		// send reject
@@ -181,7 +197,7 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	let notifies = await admin.firestore().collection("notifies").where('notifyId', '==', req.body.NotifyId).get();
 	notifies.forEach(async (doc) => {
 		await admin.firestore().collection("notifies").doc(doc.id).update({
-			fulfilled: true
+			complete: true
 		});
 	});
 
