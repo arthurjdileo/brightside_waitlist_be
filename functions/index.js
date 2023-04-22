@@ -4,6 +4,7 @@ const functions = require('firebase-functions');
 // The Firebase Admin SDK to access Firestore.
 const admin = require('firebase-admin');
 admin.initializeApp();
+require('dotenv').config()
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -45,10 +46,16 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	const patients = data.patients;
 	const clinician = data.clinician;
 	const apptSlot = data.appt;
-	console.log(data);
 
 	// assign it an ID
 	const notifyId = uuidv4();
+
+	// get clinician data from Firestore
+	const clinicianDoc = await admin.firestore().collection('clinicians').doc(clinician).get();
+	if (!clinicianDoc.exists) {
+		console.log(`Error: Clinician ${clinician} not found in Firestore`);
+	}
+	const clinicianData = clinicianDoc.data();
 	// store in notifies as
 	// notifies: Notify ID, patient name, telephone number, clinician
 	for (const patient of patients) {
@@ -60,28 +67,19 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 				continue;
 			}
 			const patientData = patientDoc.data();
-			console.log(patientData);
-			console.log(patientData.tn);
-	
-			// get clinician data from Firestore
-			const clinicianDoc = await admin.firestore().collection('clinicians').doc(clinician).get();
-			if (!clinicianDoc.exists) {
-				console.log(`Error: Clinician ${clinician} not found in Firestore`);
-				continue;
-			}
-			const clinicianData = clinicianDoc.data();
 	
 			// invoke Twilio and get sid
 			// check tn
 			let exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
 				.executions
 				.create({to: "+17328228510", from: "+18448291335", parameters: {
-					Body: "Reply 'Y' to accept appt. Reply 'N' to decline."
+					Body: "Reply 'Y' to accept appt. Reply 'N' to decline.",
+					NotifyId: notifyId,
+					patientId: patient
 				}})
-			console.log(exec.sid);
 	
 			// store in db
-			const res = await admin.firestore().collection('notifies').doc(notifyId).set({
+			await admin.firestore().collection('notifies').doc(notifyId).set({
 				notifyId: notifyId,
 				patientName: patientData.firstName + " " + patientData.lastName,
 				patientId: patient,
@@ -89,7 +87,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 				clinician: clinicianData.firstName + " " + clinicianData.lastName,
 				clinicianId: clinician,
 				appt: apptSlot,
-				sid: null,
+				sid: exec.sid,
 				ts: new Date().getTime()
 			});
 			console.log(`Notify record added for patient ${patient}`);
@@ -99,23 +97,118 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			continue;
 		}
 	}
+	await admin.firestore().collection('history').doc(notifyId).set({
+		notifyId: notifyId,
+		clinician: clinicianData.firstName + " " + clinicianData.lastName,
+		clinicianId: clinician,
+		appt: apptSlot,
+		ts: new Date().getTime(),
+		fulfilled: false,
+	});
 	// history: Notify ID, patients, appt timeslot, clinician, fulfilled: false
+
 
 	// send post req to twilio to send all messages
 	// if 409, user is already in active waitlist
 })
 
-exports.receiveNotifies = functions.https.onCall(async (data, ctx) => {
-	// on recv, get:
+exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
+// on recv, get:
 	// tn, notify ID
+	res.set('Access-Control-Allow-Origin', "*");
+	if (req.method === 'OPTIONS') {
+		// Send response to OPTIONS requests
+		res.set('Access-Control-Allow-Methods', 'POST');
+		res.set('Access-Control-Allow-Headers', 'Content-Type');
+		res.status(204).send('');
+		return;
+	}
+	const USERNAME = process.env.USERNAME;
+	const PASSWORD = process.env.PASSWORD;
+    
+	const authHeader = req.get("Authorization");
+	console.log(authHeader)
+	if (!authHeader) {
+	  console.log("no header");
+	  res.status(401).send('');
+	  return;
+	}
+  
+	const [authType, credentials] = authHeader.split(' ');
+	console.log(authType, credentials);
+	if (authType.toLowerCase() !== 'basic') {
+		console.log("no basic");
+		res.status(401).send('');
+	  	return;
+	}
+  
+	const [username, password] = Buffer.from(credentials, 'base64')
+	  .toString()
+	  .split(" ")[1]
+	  .split(':');
+  
+	if (username !== USERNAME || password !== PASSWORD) {
+		console.log("incorrect", username, password);
+		res.status(401).json({"success": false});
+		return;
+	}
 
+	console.log(req.body.tn, req.body.NotifyId, req.body.patientId);
 	// has notify been satisfied?
 	// check history: notify ID, fulfilled
+	const historyDoc = await admin.firestore().collection('history').doc(req.body.NotifyId).get();
+	if (!historyDoc.exists) {
+		console.log(`Error: History ${req.body.NotifyId} not found in Firestore`);
+	}
+	const historyData = historyDoc.data();
 
 	// if fulfilled, send rejection
+	if (fulfilled) {
+		// send reject
+		return;
+	}
+
+	const patientDoc = await admin.firestore().collection('patients').doc(req.body.patientId).get();
+	if (!patientDoc.exists) {
+		console.log(`Error: Patient ${patient} not found in Firestore`);
+	}
+	const patientData = patientDoc.data();
 
 	// if fcfs, mark history as fulfilled
+	await admin.firestore().collection('history').doc(notifyId).update({
+		fulfilled: true,
+		patientId: req.body.patientId,
+		isLoaded: false,
+	})
+
 	// remove notifies from db
+	await admin.firestore().collection("notifies").
 	// cancel exec ctx
 	// add entry to appts db with patient ID, appt datetime, clinician
 })
+
+
+// exports.handler = function(context, event, callback) {
+// 	// Here's an example of setting up some TWiML to respond to with this function
+
+	
+  
+// 	// This callback is what is returned in response to this function being invoked.
+// 	// It's really important! E.g. you might respond with TWiML here for a voice or SMS response.
+// 	// Or you might return JSON data to a studio flow. Don't forget it!
+// 	return callback(null, twiml);
+//   };
+  
+//   // Helper method to format the response as a 401 Unauthorized response
+//   // with the appropriate headers and values
+//   const setUnauthorized = (response) => {
+// 	response
+// 	  .setBody('Unauthorized')
+// 	  .setStatusCode(401)
+// 	  .appendHeader(
+// 		'WWW-Authenticate',
+// 		'Basic realm="Authentication Required"'
+// 	  );
+  
+// 	return response;
+//   };
