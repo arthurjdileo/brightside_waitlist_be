@@ -73,6 +73,20 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 				continue;
 			}
 			const patientData = patientDoc.data();
+
+			// cancel any existing exec
+			const notifies = await admin.firestore().collection('notifies').where("patientId", "==", patient).where("complete", "==", false).get();
+			let docs = {};
+			notifies.forEach(n => {
+				d = n.data();
+				docs[n.id] = d.sid;
+			});
+			for (let [id, sid] of Object.entries(docs)) {
+				await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e").executions(sid).remove();
+				await admin.firestore().collection("notifies").doc(id).update({
+					complete: true
+				});
+			}
 	
 			// invoke Twilio and get sid
 			// check tn
@@ -80,7 +94,6 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			let hasErr = false;
 			// const msgBody = `${patientData.firstName},\nAn appointment on ${apptSlot.toLocaleDateString('en-US', timeOptions)} with ${clinicianData.firstName} ${clinicianData.lastName} has been made available.\nIf you wish to claim this appointment, reply 'Y'.\n\nThank you,\nBrightside Counseling`;
 			const msgBody = patientData.firstName+",\n\nAn appointment on "+apptSlot.toLocaleDateString('en-US', timeOptions)+" with "+clinicianData.firstName+" "+clinicianData.lastName+" has been made available.\n\nIf you wish to claim this appointment, reply 'Y'.\n\nThank you,\nBrightside Counseling";
-			console.log(msgBody);
 			try {
 				exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
 					.executions
@@ -106,7 +119,8 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 				appt: apptSlot,
 				sid: exec.sid,
 				ts: new Date().getTime(),
-				status: !hasErr ? 'sent' : 'failed'
+				status: !hasErr ? 'sent' : 'failed',
+				complete: false
 			});
 			console.log(`Notify record added for patient ${patient}`);
 	
@@ -192,11 +206,8 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	})
 
 	// remove notifies from db
-	let notifies = await admin.firestore().collection("notifies").where('notifyId', '==', req.body.NotifyId).get();
-	notifies.forEach(async (doc) => {
-		await admin.firestore().collection("notifies").doc(doc.id).update({
-			complete: true
-		});
+	await admin.firestore().collection("notifies").doc(req.body.NotifyId+"_"+req.body.patientId).update({
+		complete: true
 	});
 
 	// cancel exec ctx
