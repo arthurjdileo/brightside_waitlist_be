@@ -13,6 +13,10 @@ const twilio = require('twilio')(accountSid, authToken);
 
 const { v4: uuidv4 } = require('uuid');
 
+const { CloudTasksClient } = require('@google-cloud/tasks')
+const tasksClient = new CloudTasksClient();
+const queuePath = tasksClient.queuePath("brightside-375502", "us-east4", "notifyFlex")
+
 const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric'};
 
 // Take the text parameter passed to this HTTP endpoint and insert it into 
@@ -60,6 +64,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	const clinicianDoc = await admin.firestore().collection('clinicians').doc(clinician).get();
 	if (!clinicianDoc.exists) {
 		console.log(`Error: Clinician ${clinician} not found in Firestore`);
+		return {'success': false, 'error': 'Invalid clinician'};
 	}
 	const clinicianData = clinicianDoc.data();
 	// store in notifies as
@@ -136,12 +141,8 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 		appt: apptSlot,
 		ts: new Date().getTime(),
 		fulfilled: false,
+		flex: data.hasFlex
 	});
-	// history: Notify ID, patients, appt timeslot, clinician, fulfilled: false
-
-
-	// send post req to twilio to send all messages
-	// if 409, user is already in active waitlist
 })
 
 exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
