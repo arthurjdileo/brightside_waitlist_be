@@ -13,10 +13,6 @@ const twilio = require('twilio')(accountSid, authToken);
 
 const { v4: uuidv4 } = require('uuid');
 
-const { CloudTasksClient } = require('@google-cloud/tasks')
-const tasksClient = new CloudTasksClient();
-const queuePath = tasksClient.queuePath("brightside-375502", "us-east4", "notifyFlex")
-
 const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric'};
 
 // Take the text parameter passed to this HTTP endpoint and insert it into 
@@ -87,10 +83,14 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 				docs[n.id] = d.sid;
 			});
 			for (let [id, sid] of Object.entries(docs)) {
-				await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e").executions(sid).remove();
-				await admin.firestore().collection("notifies").doc(id).update({
-					complete: true
-				});
+				try {
+					await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e").executions(sid).remove();
+					await admin.firestore().collection("notifies").doc(id).update({
+						complete: true
+					});
+				} catch(err) {
+					console.error("Failed to remove exec ctx. and from notifies: ", err);
+				}
 			}
 	
 			// invoke Twilio and get sid
@@ -102,7 +102,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			try {
 				exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
 					.executions
-					.create({to: patientData.tn, from: "+18448291335", parameters: {
+					.create({to: patientData.tn, from: process.env.TWILIO_TN, parameters: {
 						Body: msgBody,
 						NotifyId: notifyId,
 						patientId: patient
@@ -215,4 +215,51 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 
 	res.status(200).json({'success': true});
 	// add entry to appts db with patient ID, appt datetime, clinician
+})
+
+exports.notifyClinicians = functions.pubsub.schedule("every mon,tue,wed,thu,fri 09:00")
+.timeZone("America/New_York")
+.onRun(async (ctx) => {
+	const pendingAssignment = await admin.firestore().collection('pendingAssignment').get();
+	const cliniciansDb = await admin.firestore().collection('clinicians').get();
+	let clinicians = [];
+	let pending = {};
+
+	pendingAssignment.forEach((doc) => {
+		let p = doc.data();
+		if (!(p.clinician in pending)) {
+			pending[p.clinician] = [];
+			pending[p.clinician].push(p.patient);
+		} else {
+			pending[p.clinician].push(p.patient);
+		}
+	});
+
+	cliniciansDb.forEach((doc) => {
+		let c = doc.data();
+		clinicians.push(c);
+	})
+
+	for (let [c, patients] of Object.entries(pending)) {
+		let clinician = clinicians.find(k => k.partitionKey == c);
+		if (!clinician) {
+			console.error("Cannot find clinician: ", c);
+			continue;
+		}
+		try {
+			const msgBody = clinician.firstName+",\n\nYou have " + patients.length + " pending waitlist assignment(s).\n\nPlease navigate to https://portal.brightsidecounseling.org/#/clinicians to review these requests.\n\nThank you,\nBrightside Counseling";
+			twilio.messages.create({
+				body: msgBody,
+				from: process.env.TWILIO_TN,
+				to: clinician.tn
+			});
+		} catch (err) {
+			console.error("Twilio Error: ", err);
+			continue;
+		}
+
+		console.log(`Notified ${clinician.firstName} ${clinician.lastName} for ${patients.length} pending queue.`);
+	}
+	
+	return null;
 })
