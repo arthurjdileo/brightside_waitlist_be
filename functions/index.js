@@ -15,26 +15,6 @@ const { v4: uuidv4 } = require('uuid');
 
 const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric'};
 
-// Take the text parameter passed to this HTTP endpoint and insert it into 
-// Firestore under the path /messages/:documentId/original
-exports.addMessage = functions.https.onCall(async (data, ctx) => {
-	if (!ctx.auth) {
-		// Throwing an HttpsError so that the client gets the error details.
-		throw new functions.https.HttpsError('failed-precondition', 'The function must be called ' +
-			'while authenticated.');
-	}
-	const uid = ctx.auth.uid;
-	const name = ctx.auth.token.name || null;
-	const email = ctx.auth.token.email || null;
-	console.log(uid,name,email);
-	// Grab the text parameter.
-	const original = data.text;
-	// Push the new message into Firestore using the Firebase Admin SDK.
-	const writeResult = await admin.firestore().collection('messages').add({original: original});
-	// Send back a message that we've successfully written the message
-	return {result: `Message with ID: ${writeResult.id} added.`};
-  });
-
 exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	if (!ctx.auth) {
 		// Throwing an HttpsError so that the client gets the error details.
@@ -84,7 +64,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			});
 			for (let [id, sid] of Object.entries(docs)) {
 				try {
-					await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e").executions(sid).remove();
+					await twilio.studio.v2.flows(process.env.TWILIO_FLOW_UID).executions(sid).remove();
 					await admin.firestore().collection("notifies").doc(id).update({
 						complete: true
 					});
@@ -97,10 +77,10 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			// check tn
 			let exec;
 			let hasErr = false;
-			// const msgBody = `${patientData.firstName},\nAn appointment on ${apptSlot.toLocaleDateString('en-US', timeOptions)} with ${clinicianData.firstName} ${clinicianData.lastName} has been made available.\nIf you wish to claim this appointment, reply 'Y'.\n\nThank you,\nBrightside Counseling`;
+
 			const msgBody = patientData.firstName+",\n\nAn appointment on "+apptSlot.toLocaleDateString('en-US', timeOptions)+" with "+clinicianData.firstName+" "+clinicianData.lastName+" has been made available.\n\nIf you wish to claim this appointment, reply 'Y'.\n\nThank you,\nBrightside Counseling";
 			try {
-				exec = await twilio.studio.v2.flows("FWa85f5e5c89a583e26a2c5e1b1add0d5e")
+				exec = await twilio.studio.v2.flows(process.env.TWILIO_FLOW_UID)
 					.executions
 					.create({to: patientData.tn, from: process.env.TWILIO_TN, parameters: {
 						Body: msgBody,
@@ -143,6 +123,8 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 		fulfilled: false,
 		flex: data.hasFlex
 	});
+
+	return {'success': true};
 })
 
 exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
@@ -210,6 +192,9 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	await admin.firestore().collection("notifies").doc(req.body.NotifyId+"_"+req.body.patientId).update({
 		complete: true
 	});
+
+	//remove patient from waitlist
+	await admin.firestore().collection("waitlists").doc(req.body.patientId).delete();
 
 	// cancel exec ctx
 
