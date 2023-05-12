@@ -140,26 +140,26 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	}
 	const USERNAME = process.env.USERNAME;
 	const PASSWORD = process.env.PASSWORD;
-    
+
 	const authHeader = req.get("Authorization");
 	if (!authHeader) {
-	  console.error("no header");
-	  res.status(401).send('');
-	  return;
+	console.error("no header");
+	res.status(401).send('');
+	return;
 	}
-  
+
 	const [authType, credentials] = authHeader.split(' ');
 	if (authType.toLowerCase() !== 'basic') {
 		console.error("no basic");
 		res.status(401).send('');
-	  	return;
+		return;
 	}
-  
+
 	const [username, password] = Buffer.from(credentials, 'base64')
-	  .toString()
-	  .split(" ")[1]
-	  .split(':');
-  
+	.toString()
+	.split(" ")[1]
+	.split(':');
+
 	if (username !== USERNAME || password !== PASSWORD) {
 		console.error("incorrect", username, password);
 		res.status(401).json({"success": false});
@@ -248,3 +248,86 @@ exports.notifyClinicians = functions.pubsub.schedule("every mon,tue,wed,thu,fri 
 	
 	return null;
 })
+
+exports.addUser = functions.https.onRequest(async (req, res) => {
+	// on recv, get:
+		// tn, notify ID
+		res.set('Access-Control-Allow-Origin', "*");
+		if (req.method === 'OPTIONS') {
+			// Send response to OPTIONS requests
+			res.set('Access-Control-Allow-Methods', 'POST');
+			res.set('Access-Control-Allow-Headers', 'Content-Type');
+			res.status(204).send('');
+			return;
+		}
+
+		// normalize TN
+		const digitsOnly = req.body.tn.replace(/\D/g, '');
+
+		// Extract the first 10 digits
+		const extractedDigits = digitsOnly.substring(0, 10);
+		const normalizedTn = '+1'+extractedDigits;
+
+		try {
+			const patientUUID = uuidv4();
+			await admin.firestore().collection('patients').doc(patientUUID).set({
+				// structural
+				partitionKey: patientUUID,
+				created: new Date().getTime(),
+				modified: new Date().getTime(),
+				modifiedBy: "Intake Form",
+				insuranceModified: new Date().getTime(),
+				// personal
+				street: req.body.street,
+				city: req.body.city,
+				state: req.body.state,
+				zipCode: req.body.zipCode,
+				dob: req.body.dob,
+				tn: normalizedTn,
+				tn_consent: req.body.tn_consent,
+				email: req.body.email,
+				email_consent: req.body.email_consent,
+				email_newsletter: req.body.newsletter,
+				firstName: req.body.firstName,
+				lastName: req.body.lastName,
+				gender: req.body.gender,
+				// general insurance
+				memberID: req.body.memberId,
+				provider: req.body.provider,
+				primaryCardHolder: req.body.cardHolder,
+				primaryCardHolderDOB: req.body.cardHolderDob,
+				relationshipToInsured: req.body.relationshipToInsured,
+				// queried insurance
+				copay: req.body.copay,
+				coInsuranceInNet: req.body.coInsuranceInNet,
+				famDeductibleInNet: req.body.famDeductibleInNet,
+				famDeductibleInNetRemaining: req.body.famDeductibleInNetRemaining,
+				groupName: req.body.groupName,
+				indivDeductibleInNet: req.body.indivDeductibleInNet,
+				indivDeductibleInNetRemaining: req.body.indivDeductibleInNetRemaining,
+				planName: req.body.planName,
+				subscriber: req.body.subscriber,
+				// extras
+				primaryPhysician: req.body.primaryCare,
+				referredBy: req.body.referredBy,
+				// preferences
+				careType: req.body.care,
+				specialtyPreferences:req.body.specialties,
+				genderPreferences: req.body.genderPreferences,
+				ethnicityPreferences: req.body.ethnicities,
+				interface: req.body.interface,
+			});
+
+			await admin.firestore().collection('waitlists').doc(patientUUID).set({
+				clinician: 'pending',
+				patient: patientUUID
+			});
+
+		} catch (err) {
+			console.error("Failed to insert new patient: ", err.message);
+			res.status(500).json({'success': false});
+		}
+
+	
+		res.status(200).json({'success': true});
+	})
