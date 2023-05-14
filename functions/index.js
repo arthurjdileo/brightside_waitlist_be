@@ -337,8 +337,8 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 					patient: patientUUID
 				});
 			} else {
-				await admin.firestore().collection('waitlists').doc(patientUUID).set({
-					clinician: 'pending',
+				await admin.firestore().collection('pendingAssignment').doc(patientUUID).set({
+					clinician: req.body?.selectedClinician,
 					patient: patientUUID
 				});
 			}
