@@ -260,16 +260,20 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 			res.status(204).send('');
 			return;
 		}
-
+		
+		if (!req.body?.tn) {
+			res.status(500).json({'success': false});
+			return;
+		}
 		// normalize TN
 		const digitsOnly = req.body.tn.replace(/\D/g, '');
 
 		// Extract the first 10 digits
 		const extractedDigits = digitsOnly.substring(0, 10);
 		const normalizedTn = '+1'+extractedDigits;
+		const patientUUID = uuidv4();
 
 		try {
-			const patientUUID = uuidv4();
 			await admin.firestore().collection('patients').doc(patientUUID).set({
 				// structural
 				partitionKey: patientUUID,
@@ -278,44 +282,50 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				modifiedBy: "Intake Form",
 				insuranceModified: new Date().getTime(),
 				// personal
-				street: req.body.street,
-				city: req.body.city,
-				state: req.body.state,
-				zipCode: req.body.zipCode,
-				dob: req.body.dob,
+				street: req.body?.street,
+				city: req.body?.city,
+				state: req.body?.state,
+				zipCode: req.body?.zipCode,
+				dob: req.body?.dob,
 				tn: normalizedTn,
-				tn_consent: req.body.tn_consent,
-				email: req.body.email,
-				email_consent: req.body.email_consent,
-				email_newsletter: req.body.newsletter,
-				firstName: req.body.firstName,
-				lastName: req.body.lastName,
-				gender: req.body.gender,
+				tn_consent: req.body?.tn_consent,
+				email: req.body?.email,
+				email_consent: req.body?.email_consent,
+				email_newsletter: req.body?.newsletter,
+				firstName: req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1),
+				lastName: req.body?.lastName.charAt(0).toUpperCase() + req.body?.lastName.slice(1),
+				gender: req.body?.gender,
 				// general insurance
-				memberID: req.body.memberId,
-				provider: req.body.provider,
-				primaryCardHolder: req.body.cardHolder,
-				primaryCardHolderDOB: req.body.cardHolderDob,
-				relationshipToInsured: req.body.relationshipToInsured,
+				memberID: req.body?.memberId,
+				provider: req.body?.provider,
+				primaryCardHolder: req.body?.cardHolder,
+				primaryCardHolderDOB: req.body?.cardHolderDob,
+				relationshipToInsured: req.body?.relationshipToInsured,
 				// queried insurance
-				copay: req.body.copay,
-				coInsuranceInNet: req.body.coInsuranceInNet,
-				famDeductibleInNet: req.body.famDeductibleInNet,
-				famDeductibleInNetRemaining: req.body.famDeductibleInNetRemaining,
-				groupName: req.body.groupName,
-				indivDeductibleInNet: req.body.indivDeductibleInNet,
-				indivDeductibleInNetRemaining: req.body.indivDeductibleInNetRemaining,
-				planName: req.body.planName,
-				subscriber: req.body.subscriber,
+				copay: req.body?.copay,
+				coInsuranceInNet: req.body?.coInsuranceInNet,
+				famDeductibleInNet: req.body?.famDeductibleInNet,
+				famDeductibleInNetRemaining: req.body?.famDeductibleInNetRemaining,
+				groupName: req.body?.groupName,
+				indivDeductibleInNet: req.body?.indivDeductibleInNet,
+				indivDeductibleInNetRemaining: req.body?.indivDeductibleInNetRemaining,
+				planName: req.body?.planName,
+				subscriber: req.body?.subscriber,
 				// extras
-				primaryPhysician: req.body.primaryCare,
-				referredBy: req.body.referredBy,
+				primaryPhysician: req.body?.primaryCare,
+				referredBy: req.body?.referredBy,
 				// preferences
-				careType: req.body.care,
-				specialtyPreferences:req.body.specialties,
-				genderPreferences: req.body.genderPreferences,
-				ethnicityPreferences: req.body.ethnicities,
-				interface: req.body.interface,
+				careCategory: req.body?.care,
+				careType: req.body?.type_of_care,
+				specialtyPreferences:req.body?.specialties,
+				genderPreferences: req.body?.genderPreferences,
+				ethnicityPreferences: req.body?.ethnicities,
+				interface: req.body?.interface,
+				// genetic testing
+				genetic_testing: req.body?.genetic_testing,
+				genetic_testing_method: req.body?.genetic_testing_method,
+				dayPreference: req.body?.dayPreference,
+				timePreference: req.body?.timePreference
 			});
 
 			await admin.firestore().collection('waitlists').doc(patientUUID).set({
@@ -326,8 +336,137 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 		} catch (err) {
 			console.error("Failed to insert new patient: ", err.message);
 			res.status(500).json({'success': false});
+			return;
+		}
+
+		try {
+			let fName = req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1);
+			const msgBody = fName+",\n\n.We have successfully received your form. Thank you for choosing to receive text messages. Reply STOP to stop.\n\nThank you,\nBrightside Counseling";
+			twilio.messages.create({
+				body: msgBody,
+				from: process.env.TWILIO_TN,
+				to: normalizedTn
+			});
+		} catch (err) {
+			console.error("Twilio Error: ", err);
 		}
 
 	
-		res.status(200).json({'success': true});
+		res.status(200).json({'success': true, 'patientId': patientUUID});
 	})
+
+exports.matchPatient = functions.https.onRequest(async (req, res) => {
+	// on recv, get:
+	// tn, notify ID
+	res.set('Access-Control-Allow-Origin', "*");
+	if (req.method === 'OPTIONS') {
+		// Send response to OPTIONS requests
+		res.set('Access-Control-Allow-Methods', 'POST');
+		res.set('Access-Control-Allow-Headers', 'Content-Type');
+		res.status(204).send('');
+		return;
+	}
+
+	const patientId = req.body.patientId;
+
+	try {
+		// load patient data
+		const patientDoc = await admin.firestore().collection('clinicians').doc(patientId).get();
+		if (!patientDoc.exists) {
+			console.log(`Error: Patient ${patientId} not found in Firestore`);
+			res.status(500).json({'success': false});
+		}
+		const patientData = patientDoc.data();
+
+		// load all clinicians
+		const cliniciansDb = await admin.firestore().collection('clinicians').get();
+		let clinicians = [];
+		cliniciansDb.forEach((doc) => {
+			let c = doc.data();
+			clinicians.push(c);
+		});
+
+		// get total score
+		let totalScore = 6;
+
+		let scores = {};
+		// assign score to each clinician
+		for (let c of clinicians) {
+			let s = 0;
+			if (patientData.ethnicityPreferences.includes("No Preference")) s++
+			else if (patientData.ethnicityPreferences.includes(c.ethnicity)) s++;
+
+			if (patientData.genderPreferences.includes("No Preference")) s++
+			else if (patientData.genderPreferences.includes(c.gender)) s++;
+
+			if (patientData.interface == "Either") s++
+			else if (patientData.interface == c.interface) s++;
+
+			if (patientData.dayPreference == "Either") s++;
+			else if (c.days.includes(patientData.dayPreference)) s++;
+
+			if (patientData.timePreference[0] == "No Preference / Next Available") s++;
+			else if (patientData.timePreference.filter(e => c.times.includes(e)).length > 0) s++;
+
+			if (patientData.timePreference[0] == "No Preference / Next Available") s++;
+			else if (patientData.timePreference.filter(e => c.times.includes(e)).length > 0) s++;
+
+			let score = Math.round((s / totalScore) * 100);
+			scores[c.partitionKey] = score;
+			// ethnicity preference:
+				// No Preference
+				// Asian
+				// Black or African American
+				// Hispanic or Latinx
+				// Middle Eastern or North African
+				// Native or Indigenous American
+				// Pacific Islander
+				// White
+			// gender preference:
+				// No Preference
+				// Female
+				// Male
+				// Non-binary
+			// interface preference
+				// In-Person
+				// Virtual
+				// Either
+			// day preference
+				// Weekdays
+				// Weekends
+				// No Preference / Next Available
+			// time preference
+				// Morning
+				// Afternoon
+				// Evening
+			// specialties
+				// ADD/ADHD
+				// Addiction / Substance Use
+				// Anger
+				// Anxiety
+				// Dating
+				// Depression
+				// Divorce
+				// Eating Disorder
+				// Fertility
+				// Intrusive Thoughts
+				// Identity
+				// Loneliness
+				// LGBTQIA+
+				// Parenting
+				// Puberty
+				// Self-Esteem
+				// Suicidial Feelings
+				// Stress
+				// Trauma
+				// Other
+		}
+		// {partitionKey: score} - top3
+		let top3 = Object.fromEntries(Object.entries(scores).sort((a,b) => b[1] - a[1]).slice(0,3));
+		res.status(200).json(top3);
+	} catch (err) {
+		console.error("Failed to match patient: ", err.message);
+		res.status(500).json({'success': false});
+		return;
+	}
+})
