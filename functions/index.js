@@ -274,6 +274,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 		const patientUUID = uuidv4();
 
 		try {
+			let start = new Date().getTime();
 			await admin.firestore().collection('patients').doc(patientUUID).set({
 				// structural
 				partitionKey: patientUUID,
@@ -328,6 +329,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				timePreference: req.body?.timePreference,
 				selectedClinician: req.body?.selectedClinician
 			});
+			console.log(`DB Elapsed Time = ${new Date().getTime()-start}ms.`);
 
 			res.status(200).json({'success': true, 'patientId': patientUUID});
 
@@ -346,6 +348,60 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 
 		} catch (err) {
 			console.error("Failed to insert new patient: ", err.message);
+			console.error(JSON.stringify({
+				// structural
+				partitionKey: patientUUID,
+				created: new Date().getTime(),
+				modified: new Date().getTime(),
+				modifiedBy: "Intake Form",
+				insuranceModified: new Date().getTime(),
+				// personal
+				street: req.body?.street,
+				city: req.body?.city,
+				state: req.body?.state,
+				zipCode: req.body?.zipCode,
+				dob: req.body?.dob,
+				tn: normalizedTn,
+				tn_consent: req.body?.tn_consent,
+				email: req.body?.email,
+				email_consent: req.body?.email_consent,
+				email_newsletter: req.body?.newsletter,
+				firstName: req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1),
+				lastName: req.body?.lastName.charAt(0).toUpperCase() + req.body?.lastName.slice(1),
+				gender: req.body?.gender,
+				// general insurance
+				memberID: req.body?.memberId,
+				provider: req.body?.provider,
+				primaryCardHolder: req.body?.cardHolder,
+				primaryCardHolderDOB: req.body?.cardHolderDob,
+				relationshipToInsured: req.body?.relationshipToInsured,
+				// queried insurance
+				copay: req.body?.copay,
+				coInsuranceInNet: req.body?.coInsuranceInNet,
+				famDeductibleInNet: req.body?.famDeductibleInNet,
+				famDeductibleInNetRemaining: req.body?.famDeductibleInNetRemaining,
+				groupName: req.body?.groupName,
+				indivDeductibleInNet: req.body?.indivDeductibleInNet,
+				indivDeductibleInNetRemaining: req.body?.indivDeductibleInNetRemaining,
+				planName: req.body?.planName,
+				subscriber: req.body?.subscriber,
+				// extras
+				primaryPhysician: req.body?.primaryCare,
+				referredBy: req.body?.referredBy,
+				// preferences
+				careCategory: req.body?.care,
+				careType: req.body?.type_of_care,
+				specialtyPreferences:req.body?.specialties,
+				genderPreferences: req.body?.genderPreferences,
+				ethnicityPreferences: req.body?.ethnicities,
+				interface: req.body?.interface,
+				// genetic testing
+				genetic_testing: req.body?.genetic_testing,
+				genetic_testing_method: req.body?.genetic_testing_method,
+				dayPreference: req.body?.dayPreference,
+				timePreference: req.body?.timePreference,
+				selectedClinician: req.body?.selectedClinician
+			}));
 			res.status(500).json({'success': false});
 			return;
 		}
@@ -383,6 +439,7 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 		let dayPreference = req.body.dayPreference;
 		let timePreference = req.body.timePreference;
 
+		let start = new Date().getTime();
 		// load all clinicians
 		const cliniciansDb = await admin.firestore().collection('clinicians').get();
 		let clinicians = [];
@@ -469,6 +526,7 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 		// {partitionKey: score} - top3
 		let top3 = Object.fromEntries(Object.entries(scores).sort((a,b) => b[1] - a[1]).slice(0,3));
 		res.status(200).json(top3);
+		console.log(`Elapsed Time = ${new Date().getTime()-start}ms.`);
 	} catch (err) {
 		console.error("Failed to match patient: ", err.message);
 		res.status(500).json({'success': false});
