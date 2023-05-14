@@ -325,13 +325,24 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				genetic_testing: req.body?.genetic_testing,
 				genetic_testing_method: req.body?.genetic_testing_method,
 				dayPreference: req.body?.dayPreference,
-				timePreference: req.body?.timePreference
+				timePreference: req.body?.timePreference,
+				selectedClinician: req.body?.selectedClinician
 			});
 
-			await admin.firestore().collection('waitlists').doc(patientUUID).set({
-				clinician: 'pending',
-				patient: patientUUID
-			});
+			res.status(200).json({'success': true, 'patientId': patientUUID});
+
+			if (req.body?.selectedClinician == "Unsure") {
+				await admin.firestore().collection('waitlists').doc(patientUUID).set({
+					clinician: 'pending',
+					patient: patientUUID
+				});
+			} else {
+				await admin.firestore().collection('waitlists').doc(patientUUID).set({
+					clinician: 'pending',
+					patient: patientUUID
+				});
+			}
+
 
 		} catch (err) {
 			console.error("Failed to insert new patient: ", err.message);
@@ -341,7 +352,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 
 		try {
 			let fName = req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1);
-			const msgBody = fName+",\n\n.We have successfully received your form. Thank you for choosing to receive text messages. Reply STOP to stop.\n\nThank you,\nBrightside Counseling";
+			const msgBody = fName+",\n\nWe have successfully received your form. Thank you for choosing to receive text messages. Reply STOP to stop.\n\nThank you,\nBrightside Counseling";
 			twilio.messages.create({
 				body: msgBody,
 				from: process.env.TWILIO_TN,
@@ -350,9 +361,6 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 		} catch (err) {
 			console.error("Twilio Error: ", err);
 		}
-
-	
-		res.status(200).json({'success': true, 'patientId': patientUUID});
 	})
 
 exports.matchPatient = functions.https.onRequest(async (req, res) => {
@@ -367,16 +375,13 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 		return;
 	}
 
-	const patientId = req.body.patientId;
-
 	try {
 		// load patient data
-		const patientDoc = await admin.firestore().collection('clinicians').doc(patientId).get();
-		if (!patientDoc.exists) {
-			console.log(`Error: Patient ${patientId} not found in Firestore`);
-			res.status(500).json({'success': false});
-		}
-		const patientData = patientDoc.data();
+		let ethnicityPreferences = req.body.ethnicityPreferences;
+		let genderPreferences = req.body.genderPreferences;
+		let interface = req.body.interface;
+		let dayPreference = req.body.dayPreference;
+		let timePreference = req.body.timePreference;
 
 		// load all clinicians
 		const cliniciansDb = await admin.firestore().collection('clinicians').get();
@@ -393,23 +398,23 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 		// assign score to each clinician
 		for (let c of clinicians) {
 			let s = 0;
-			if (patientData.ethnicityPreferences.includes("No Preference")) s++
-			else if (patientData.ethnicityPreferences.includes(c.ethnicity)) s++;
+			if (ethnicityPreferences.includes("No Preference")) s++
+			else if (ethnicityPreferences.includes(c.ethnicity)) s++;
 
-			if (patientData.genderPreferences.includes("No Preference")) s++
-			else if (patientData.genderPreferences.includes(c.gender)) s++;
+			if (genderPreferences.includes("No Preference")) s++
+			else if (genderPreferences.includes(c.gender)) s++;
 
-			if (patientData.interface == "Either") s++
-			else if (patientData.interface == c.interface) s++;
+			if (interface == "Either") s++
+			else if (interface == c.interface) s++;
 
-			if (patientData.dayPreference == "Either") s++;
-			else if (c.days.includes(patientData.dayPreference)) s++;
+			if (dayPreference == "Either") s++;
+			else if (c.days.includes(dayPreference)) s++;
 
-			if (patientData.timePreference[0] == "No Preference / Next Available") s++;
-			else if (patientData.timePreference.filter(e => c.times.includes(e)).length > 0) s++;
+			if (timePreference[0] == "No Preference / Next Available") s++;
+			else if (timePreference.filter(e => c.times.includes(e)).length > 0) s++;
 
-			if (patientData.timePreference[0] == "No Preference / Next Available") s++;
-			else if (patientData.timePreference.filter(e => c.times.includes(e)).length > 0) s++;
+			if (timePreference[0] == "No Preference / Next Available") s++;
+			else if (timePreference.filter(e => c.times.includes(e)).length > 0) s++;
 
 			let score = Math.round((s / totalScore) * 100);
 			scores[c.partitionKey] = score;
