@@ -408,7 +408,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 
 		try {
 			let fName = req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1);
-			const msgBody = fName+",\n\nWe have successfully received your form. Thank you for choosing to receive text messages. Reply STOP to stop.\n\nThank you,\nBrightside Counseling";
+			const msgBody = fName+",\n\nWe have successfully received your form. Thank you for choosing to receive text messages. Due to higher than expected volume of requests, we have placed you on the waitlist for your clinician. We will get back in touch with you on this number as soon as we can setup an appointment. Thank you for your understanding. Reply STOP to stop.\n\nThank you,\nBrightside Counseling";
 			twilio.messages.create({
 				body: msgBody,
 				from: process.env.TWILIO_TN,
