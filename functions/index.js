@@ -338,6 +338,11 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 					clinician: 'pending',
 					patient: patientUUID
 				});
+			} else if (req.body?.selectedClinician == "Flex") {
+				await admin.firestore().collection('waitlists').doc(patientUUID).set({
+					clinician: 'flex',
+					patient: patientUUID
+				});
 			} else {
 				await admin.firestore().collection('pendingAssignment').doc(patientUUID).set({
 					clinician: req.body?.selectedClinician,
