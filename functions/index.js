@@ -1,5 +1,6 @@
 // The Cloud Functions for Firebase SDK to create Cloud Functions and set up triggers.
 const functions = require('firebase-functions');
+const path = require('path');
 
 // The Firebase Admin SDK to access Firestore.
 const admin = require('firebase-admin');
@@ -8,6 +9,8 @@ require('dotenv').config()
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+const bucketName = process.env.STORAGE_BUCKET;
 
 const twilio = require('twilio')(accountSid, authToken);
 
@@ -273,6 +276,23 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 		const normalizedTn = '+1'+extractedDigits;
 		const patientUUID = uuidv4();
 
+		let frontPath = null;
+		let backPath = null;
+
+		// upload insurance card
+		try {
+			let extFront = path.extname(req.body.frontImageName).replace('.', '');
+			let extBack = path.extname(req.body.backImageName).replace('.','');
+			let imgf = req.body.frontImage.replace(/^data:image\/(.*);base64,/, "");
+			let imgb = req.body.backImage.replace(/^data:image\/(.*);base64,/, "");
+			await admin.storage().bucket(bucketName).file(`${patientUUID}_front.${extFront}`).save(Buffer.from(imgf, 'base64'), {contentType: `image/${extFront}`});
+			await admin.storage().bucket(bucketName).file(`${patientUUID}_back.${extBack}`).save(Buffer.from(imgb, 'base64'), {contentType: `image/${extBack}`});
+			frontPath = `https://storage.cloud.google.com/brightside-375502.appspot.com/${patientUUID}_front.${extFront}`;
+			backPath = `https://storage.cloud.google.com/brightside-375502.appspot.com/${patientUUID}_back.${extBack}`;
+		} catch (err) {
+			console.error(`Failed to upload insurance photos for ${patientUUID}. Ignoring...: ${err.message}`);
+		}
+
 		try {
 			let start = new Date().getTime();
 			await admin.firestore().collection('patients').doc(patientUUID).set({
@@ -327,7 +347,9 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				genetic_testing_method: req.body?.genetic_testing_method,
 				dayPreference: req.body?.dayPreference,
 				timePreference: req.body?.timePreference,
-				selectedClinician: req.body?.selectedClinician
+				selectedClinician: req.body?.selectedClinician,
+				insFront: frontPath,
+				insBack: backPath
 			});
 			console.log(`DB Elapsed Time = ${new Date().getTime()-start}ms.`);
 
