@@ -365,7 +365,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 					clinician: 'flex',
 					patient: patientUUID
 				});
-			} else {
+			} else if (req.body?.careType == 'therapy') {
 				await admin.firestore().collection('pendingAssignment').doc(patientUUID).set({
 					clinician: req.body?.selectedClinician,
 					patient: patientUUID
