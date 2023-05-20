@@ -318,8 +318,8 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				modifiedBy: "Intake Form",
 				insuranceModified: new Date().getTime(),
 				// personal
-				street: req.body?.street,
-				city: req.body?.city,
+				street: capitalizeWords(req.body?.street),
+				city: capitalizeWords(req.body?.city),
 				state: req.body?.state,
 				zipCode: req.body?.zipCode,
 				dob: req.body?.dob,
@@ -453,6 +453,10 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 
 			if (interface == "Either") s++
 			else if (interface == c.interface) s++;
+			else {
+				scores[c.partitionKey] = 0;
+				continue;
+			}
 
 			if (dayPreference == "Either") s++;
 			else if (c.days.includes(dayPreference)) s++;
