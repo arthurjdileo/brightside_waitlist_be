@@ -18,6 +18,18 @@ const { v4: uuidv4 } = require('uuid');
 
 const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric'};
 
+function capitalizeWords(str) {
+	const words = str.split(' ');
+
+	const capitalizedWords = words.map(word => {
+		const firstLetter = word.charAt(0).toUpperCase();
+		const restOfWord = word.slice(1);
+		return `${firstLetter}${restOfWord}`;
+	});
+
+	return capitalizedWords.join(' ');
+}
+
 exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	if (!ctx.auth) {
 		// Throwing an HttpsError so that the client gets the error details.
@@ -269,7 +281,10 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 			return;
 		}
 		// normalize TN
-		const digitsOnly = req.body.tn.replace(/\D/g, '');
+		let digitsOnly = req.body.tn.replace(/\D/g, '');
+		if (digitsOnly.length > 10 && digitsOnly[0] == '1') {
+			digitsOnly = digitsOnly.substring(1);
+		}
 
 		// Extract the first 10 digits
 		const extractedDigits = digitsOnly.substring(0, 10);
@@ -295,7 +310,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 
 		try {
 			let start = new Date().getTime();
-			await admin.firestore().collection('patients').doc(patientUUID).set({
+			let payload = {
 				// structural
 				partitionKey: patientUUID,
 				created: new Date().getTime(),
@@ -313,13 +328,13 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				email: req.body?.email,
 				email_consent: req.body?.email_consent,
 				email_newsletter: req.body?.newsletter,
-				firstName: req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1),
-				lastName: req.body?.lastName.charAt(0).toUpperCase() + req.body?.lastName.slice(1),
+				firstName: capitalizeWords(req.body?.firstName),
+				lastName: capitalizeWords(req.body?.lastName),
 				gender: req.body?.gender,
 				// general insurance
 				memberID: req.body?.memberId,
 				provider: req.body?.provider,
-				primaryCardHolder: req.body?.cardHolder,
+				primaryCardHolder: capitalizeWords(req.body?.cardHolder),
 				primaryCardHolderDOB: req.body?.cardHolderDob,
 				relationshipToInsured: req.body?.relationshipToInsured,
 				// queried insurance
@@ -333,8 +348,8 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				planName: req.body?.planName,
 				subscriber: req.body?.subscriber,
 				// extras
-				primaryPhysician: req.body?.primaryCare,
-				referredBy: req.body?.referredBy,
+				primaryPhysician: capitalizeWords(req.body?.primaryCare),
+				referredBy: capitalizeWords(req.body?.referredBy),
 				// preferences
 				careCategory: req.body?.care,
 				careType: req.body?.type_of_care,
@@ -350,8 +365,9 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				selectedClinician: req.body?.selectedClinician,
 				insFront: frontPath,
 				insBack: backPath
-			});
-			console.log(`DB Elapsed Time = ${new Date().getTime()-start}ms.`);
+			};
+			await admin.firestore().collection('patients').doc(patientUUID).set(payload);
+			console.log(`Added user ${req.body?.firstName} ${req.body?.lastName},${patientUUID}. DB Elapsed Time = ${new Date().getTime()-start}ms.`);
 
 			res.status(200).json({'success': true, 'patientId': patientUUID});
 
@@ -375,60 +391,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 
 		} catch (err) {
 			console.error("Failed to insert new patient: ", err.message);
-			console.error(JSON.stringify({
-				// structural
-				partitionKey: patientUUID,
-				created: new Date().getTime(),
-				modified: new Date().getTime(),
-				modifiedBy: "Intake Form",
-				insuranceModified: new Date().getTime(),
-				// personal
-				street: req.body?.street,
-				city: req.body?.city,
-				state: req.body?.state,
-				zipCode: req.body?.zipCode,
-				dob: req.body?.dob,
-				tn: normalizedTn,
-				tn_consent: req.body?.tn_consent,
-				email: req.body?.email,
-				email_consent: req.body?.email_consent,
-				email_newsletter: req.body?.newsletter,
-				firstName: req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1),
-				lastName: req.body?.lastName.charAt(0).toUpperCase() + req.body?.lastName.slice(1),
-				gender: req.body?.gender,
-				// general insurance
-				memberID: req.body?.memberId,
-				provider: req.body?.provider,
-				primaryCardHolder: req.body?.cardHolder,
-				primaryCardHolderDOB: req.body?.cardHolderDob,
-				relationshipToInsured: req.body?.relationshipToInsured,
-				// queried insurance
-				copay: req.body?.copay,
-				coInsuranceInNet: req.body?.coInsuranceInNet,
-				famDeductibleInNet: req.body?.famDeductibleInNet,
-				famDeductibleInNetRemaining: req.body?.famDeductibleInNetRemaining,
-				groupName: req.body?.groupName,
-				indivDeductibleInNet: req.body?.indivDeductibleInNet,
-				indivDeductibleInNetRemaining: req.body?.indivDeductibleInNetRemaining,
-				planName: req.body?.planName,
-				subscriber: req.body?.subscriber,
-				// extras
-				primaryPhysician: req.body?.primaryCare,
-				referredBy: req.body?.referredBy,
-				// preferences
-				careCategory: req.body?.care,
-				careType: req.body?.type_of_care,
-				specialtyPreferences:req.body?.specialties,
-				genderPreferences: req.body?.genderPreferences,
-				ethnicityPreferences: req.body?.ethnicities,
-				interface: req.body?.interface,
-				// genetic testing
-				genetic_testing: req.body?.genetic_testing,
-				genetic_testing_method: req.body?.genetic_testing_method,
-				dayPreference: req.body?.dayPreference,
-				timePreference: req.body?.timePreference,
-				selectedClinician: req.body?.selectedClinician
-			}));
+			console.error(JSON.stringify(payload));
 			res.status(500).json({'success': false});
 			return;
 		}
