@@ -267,7 +267,7 @@ exports.notifyClinicians = functions.pubsub.schedule("every mon,tue,wed,thu,fri 
 exports.addUser = functions.https.onRequest(async (req, res) => {
 	// on recv, get:
 		// tn, notify ID
-		res.set('Access-Control-Allow-Origin', "*");
+		res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
 		if (req.method === 'OPTIONS') {
 			// Send response to OPTIONS requests
 			res.set('Access-Control-Allow-Methods', 'POST');
@@ -418,7 +418,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 exports.matchPatient = functions.https.onRequest(async (req, res) => {
 	// on recv, get:
 	// tn, notify ID
-	res.set('Access-Control-Allow-Origin', "*");
+	res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
 	if (req.method === 'OPTIONS') {
 		// Send response to OPTIONS requests
 		res.set('Access-Control-Allow-Methods', 'POST');
