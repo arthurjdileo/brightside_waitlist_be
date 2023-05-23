@@ -293,19 +293,22 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 
 		let frontPath = null;
 		let backPath = null;
+		console.log(req.body);
 
 		// upload insurance card
-		try {
-			let extFront = path.extname(req.body.frontImageName).replace('.', '');
-			let extBack = path.extname(req.body.backImageName).replace('.','');
-			let imgf = req.body.frontImage.replace(/^data:image\/(.*);base64,/, "");
-			let imgb = req.body.backImage.replace(/^data:image\/(.*);base64,/, "");
-			await admin.storage().bucket(bucketName).file(`${patientUUID}_front.${extFront}`).save(Buffer.from(imgf, 'base64'), {contentType: `image/${extFront}`});
-			await admin.storage().bucket(bucketName).file(`${patientUUID}_back.${extBack}`).save(Buffer.from(imgb, 'base64'), {contentType: `image/${extBack}`});
-			frontPath = `https://storage.cloud.google.com/brightside-375502.appspot.com/${patientUUID}_front.${extFront}`;
-			backPath = `https://storage.cloud.google.com/brightside-375502.appspot.com/${patientUUID}_back.${extBack}`;
-		} catch (err) {
-			console.error(`Failed to upload insurance photos for ${patientUUID}. Ignoring...: ${err.message}`);
+		if (req.body?.frontImage) {
+			try {
+				let extFront = path.extname(req.body.frontImageName).replace('.', '');
+				let extBack = path.extname(req.body.backImageName).replace('.','');
+				let imgf = req.body.frontImage.replace(/^data:image\/(.*);base64,/, "");
+				let imgb = req.body.backImage.replace(/^data:image\/(.*);base64,/, "");
+				await admin.storage().bucket(bucketName).file(`${patientUUID}_front.${extFront}`).save(Buffer.from(imgf, 'base64'), {contentType: `image/${extFront}`});
+				await admin.storage().bucket(bucketName).file(`${patientUUID}_back.${extBack}`).save(Buffer.from(imgb, 'base64'), {contentType: `image/${extBack}`});
+				frontPath = `https://storage.cloud.google.com/brightside-375502.appspot.com/${patientUUID}_front.${extFront}`;
+				backPath = `https://storage.cloud.google.com/brightside-375502.appspot.com/${patientUUID}_back.${extBack}`;
+			} catch (err) {
+				console.error(`Failed to upload insurance photos for ${patientUUID}. Ignoring...: ${err.message}`);
+			}
 		}
 
 		try {
@@ -372,16 +375,19 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 			res.status(200).json({'success': true, 'patientId': patientUUID});
 
 			if (req.body?.selectedClinician == "Unsure") {
+				console.log(`${patientUUID} assigned to pending queue.`);
 				await admin.firestore().collection('waitlists').doc(patientUUID).set({
 					clinician: 'pending',
 					patient: patientUUID
 				});
 			} else if (req.body?.selectedClinician == "Flex") {
+				console.log(`${patientUUID} assigned to flex queue.`);
 				await admin.firestore().collection('waitlists').doc(patientUUID).set({
 					clinician: 'flex',
 					patient: patientUUID
 				});
-			} else if (req.body?.careType == 'therapy') {
+			} else if (req.body?.type_of_care == 'therapy') {
+				console.log(`${patientUUID} assigned to ${req.body?.selectedClinician}.`);
 				await admin.firestore().collection('pendingAssignment').doc(patientUUID).set({
 					clinician: req.body?.selectedClinician,
 					patient: patientUUID
@@ -397,7 +403,7 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 		}
 
 		try {
-			let fName = req.body?.firstName.charAt(0).toUpperCase() + req.body?.firstName.slice(1);
+			let fName = capitalizeWords(req.body?.firstName);
 			const msgBody = fName+",\n\nWe have successfully received your form. Thank you for choosing to receive text messages. Due to higher than expected volume of requests, we have placed you on the waitlist for your clinician. We will get back in touch with you on this number as soon as we can setup an appointment. Thank you for your understanding. Reply STOP to stop.\n\nThank you,\nBrightside Counseling";
 			twilio.messages.create({
 				body: msgBody,
@@ -452,7 +458,7 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 			else if (genderPreferences.includes(c.gender)) s++;
 
 			if (interface == "Either") s++
-			else if (interface == c.interface) s++;
+			else if (interface == c.interface || c.interface == "Either") s++;
 			else {
 				scores[c.partitionKey] = 0;
 				continue;

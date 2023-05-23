@@ -66,6 +66,14 @@ functions.http('eligibility', async (req, res) => {
 
 		let ts = new Date();
 
+		if (!translate[p]) {
+			let resp = {
+				status: "Failed",
+			}
+			res.status(500).send(resp);
+			return;
+		}
+
 		body = {
 			"payerCode": translate[p],
 			"provider": {
