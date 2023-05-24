@@ -1,20 +1,22 @@
 // The Cloud Functions for Firebase SDK to create Cloud Functions and set up triggers.
 const functions = require('firebase-functions');
 const path = require('path');
-
+const { v4: uuidv4 } = require('uuid');
+const { initializeFirestore } = require('firebase-admin/firestore');
 // The Firebase Admin SDK to access Firestore.
 const admin = require('firebase-admin');
-admin.initializeApp();
+const app = admin.initializeApp();
 require('dotenv').config()
+
+const db = initializeFirestore(app, {
+	preferRest: true
+})
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-const bucketName = process.env.STORAGE_BUCKET;
-
 const twilio = require('twilio')(accountSid, authToken);
 
-const { v4: uuidv4 } = require('uuid');
+const bucketName = process.env.STORAGE_BUCKET;
 
 const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric'};
 
@@ -30,7 +32,7 @@ function capitalizeWords(str) {
 	return capitalizedWords.join(' ');
 }
 
-exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
+exports.sendNotifies = functions.region('us-east4').runWith({memory: '128MB'}).https.onCall(async (data, ctx) => {
 	if (!ctx.auth) {
 		// Throwing an HttpsError so that the client gets the error details.
 		throw new functions.https.HttpsError('failed-precondition', 'The function must be called ' +
@@ -52,7 +54,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	const notifyId = uuidv4();
 
 	// get clinician data from Firestore
-	const clinicianDoc = await admin.firestore().collection('clinicians').doc(clinician).get();
+	const clinicianDoc = await db.collection('clinicians').doc(clinician).get();
 	if (!clinicianDoc.exists) {
 		console.log(`Error: Clinician ${clinician} not found in Firestore`);
 		return {'success': false, 'error': 'Invalid clinician'};
@@ -63,7 +65,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	for (const patient of patients) {
 		try {
 			// get patient data from Firestore
-			const patientDoc = await admin.firestore().collection('patients').doc(patient).get();
+			const patientDoc = await db.collection('patients').doc(patient).get();
 			if (!patientDoc.exists) {
 				console.error(`Error: Patient ${patient} not found in Firestore`);
 				continue;
@@ -71,7 +73,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			const patientData = patientDoc.data();
 
 			// cancel any existing exec
-			const notifies = await admin.firestore().collection('notifies').where("patientId", "==", patient).where("complete", "==", false).get();
+			const notifies = await db.collection('notifies').where("patientId", "==", patient).where("complete", "==", false).get();
 			let docs = {};
 			notifies.forEach(n => {
 				d = n.data();
@@ -80,7 +82,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			for (let [id, sid] of Object.entries(docs)) {
 				try {
 					await twilio.studio.v2.flows(process.env.TWILIO_FLOW_UID).executions(sid).remove();
-					await admin.firestore().collection("notifies").doc(id).update({
+					await db.collection("notifies").doc(id).update({
 						complete: true
 					});
 				} catch(err) {
@@ -109,7 +111,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			}
 	
 			// store in db
-			await admin.firestore().collection('notifies').doc(`${notifyId}_${patient}`).set({
+			await db.collection('notifies').doc(`${notifyId}_${patient}`).set({
 				notifyId: notifyId,
 				patientName: patientData.firstName + " " + patientData.lastName,
 				patientId: patient,
@@ -129,7 +131,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 			continue;
 		}
 	}
-	await admin.firestore().collection('history').doc(notifyId).set({
+	await db.collection('history').doc(notifyId).set({
 		notifyId: notifyId,
 		clinician: clinicianData.firstName + " " + clinicianData.lastName,
 		clinicianId: clinician,
@@ -142,7 +144,7 @@ exports.sendNotifies = functions.https.onCall(async (data, ctx) => {
 	return {'success': true};
 })
 
-exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
+exports.receiveNotifies = functions.region('us-east4').runWith({memory: '128MB'}).https.onRequest(async (req, res) => {
 // on recv, get:
 	// tn, notify ID
 	res.set('Access-Control-Allow-Origin', "*");
@@ -183,7 +185,7 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 
 	// has notify been satisfied?
 	// check history: notify ID, fulfilled
-	const historyDoc = await admin.firestore().collection('history').doc(req.body.NotifyId).get();
+	const historyDoc = await db.collection('history').doc(req.body.NotifyId).get();
 	if (!historyDoc.exists) {
 		console.error(`Error: History ${req.body.NotifyId} not found in Firestore`);
 	}
@@ -197,19 +199,19 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	}
 
 	// if fcfs, mark history as fulfilled
-	await admin.firestore().collection('history').doc(req.body.NotifyId).update({
+	await db.collection('history').doc(req.body.NotifyId).update({
 		fulfilled: true,
 		patientId: req.body.patientId,
 		isLoaded: false,
 	})
 
 	// remove notifies from db
-	await admin.firestore().collection("notifies").doc(req.body.NotifyId+"_"+req.body.patientId).update({
+	await db.collection("notifies").doc(req.body.NotifyId+"_"+req.body.patientId).update({
 		complete: true
 	});
 
 	//remove patient from waitlist
-	await admin.firestore().collection("waitlists").doc(req.body.patientId).delete();
+	await db.collection("waitlists").doc(req.body.patientId).delete();
 
 	// cancel exec ctx
 
@@ -217,11 +219,11 @@ exports.receiveNotifies = functions.https.onRequest(async (req, res) => {
 	// add entry to appts db with patient ID, appt datetime, clinician
 })
 
-exports.notifyClinicians = functions.pubsub.schedule("every mon,tue,wed,thu,fri 09:00")
+exports.notifyClinicians = functions.region('us-east4').runWith({memory: '128MB'}).pubsub.schedule("every mon,tue,wed,thu,fri 09:00")
 .timeZone("America/New_York")
 .onRun(async (ctx) => {
-	const pendingAssignment = await admin.firestore().collection('pendingAssignment').get();
-	const cliniciansDb = await admin.firestore().collection('clinicians').get();
+	const pendingAssignment = await db.collection('pendingAssignment').get();
+	const cliniciansDb = await db.collection('clinicians').get();
 	let clinicians = [];
 	let pending = {};
 
@@ -247,7 +249,7 @@ exports.notifyClinicians = functions.pubsub.schedule("every mon,tue,wed,thu,fri 
 			continue;
 		}
 		try {
-			const msgBody = clinician.firstName+",\n\nYou have " + patients.length + " pending waitlist assignment(s).\n\nPlease navigate to https://portal.brightsidecounseling.org/#/clinicians to review these requests.\n\nThank you,\nBrightside Counseling";
+			const msgBody = clinician.firstName+",\n\nYou have " + patients.length + " pending waitlist assignment(s).\n\nPlease navigate to https://portal.brightsidecounseling.org/#/clinician to review these requests.\n\nThank you,\nBrightside Counseling";
 			twilio.messages.create({
 				body: msgBody,
 				from: process.env.TWILIO_TN,
@@ -264,10 +266,10 @@ exports.notifyClinicians = functions.pubsub.schedule("every mon,tue,wed,thu,fri 
 	return null;
 })
 
-exports.addUser = functions.https.onRequest(async (req, res) => {
+exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInstances: 1, maxInstances: 1}).https.onRequest(async (req, res) => {
 	// on recv, get:
 		// tn, notify ID
-		res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
+		res.set('Access-Control-Allow-Origin', "*");
 		if (req.method === 'OPTIONS') {
 			// Send response to OPTIONS requests
 			res.set('Access-Control-Allow-Methods', 'POST');
@@ -293,7 +295,6 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 
 		let frontPath = null;
 		let backPath = null;
-		console.log(req.body);
 
 		// upload insurance card
 		if (req.body?.frontImage) {
@@ -369,28 +370,34 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 				insFront: frontPath,
 				insBack: backPath
 			};
-			await admin.firestore().collection('patients').doc(patientUUID).set(payload);
+			await db.collection('patients').doc(patientUUID).set(payload);
 			console.log(`Added user ${req.body?.firstName} ${req.body?.lastName},${patientUUID}. DB Elapsed Time = ${new Date().getTime()-start}ms.`);
 
 			res.status(200).json({'success': true, 'patientId': patientUUID});
 
 			if (req.body?.selectedClinician == "Unsure") {
 				console.log(`${patientUUID} assigned to pending queue.`);
-				await admin.firestore().collection('waitlists').doc(patientUUID).set({
+				await db.collection('waitlists').doc(patientUUID).set({
 					clinician: 'pending',
-					patient: patientUUID
+					patient: patientUUID,
+					ts: new Date().getTime(),
+					modifiedBy: "Intake Form"
 				});
 			} else if (req.body?.selectedClinician == "Flex") {
 				console.log(`${patientUUID} assigned to flex queue.`);
-				await admin.firestore().collection('waitlists').doc(patientUUID).set({
+				await db.collection('waitlists').doc(patientUUID).set({
 					clinician: 'flex',
-					patient: patientUUID
+					patient: patientUUID,
+					ts: new Date().getTime(),
+					modifiedBy: "Intake Form"
 				});
 			} else if (req.body?.type_of_care == 'therapy') {
 				console.log(`${patientUUID} assigned to ${req.body?.selectedClinician}.`);
-				await admin.firestore().collection('pendingAssignment').doc(patientUUID).set({
+				await db.collection('pendingAssignment').doc(patientUUID).set({
 					clinician: req.body?.selectedClinician,
-					patient: patientUUID
+					patient: patientUUID,
+					ts: new Date().getTime(),
+					modifiedBy: "Intake Form"
 				});
 			}
 
@@ -415,10 +422,10 @@ exports.addUser = functions.https.onRequest(async (req, res) => {
 		}
 	})
 
-exports.matchPatient = functions.https.onRequest(async (req, res) => {
+exports.matchPatient = functions.region('us-east4').runWith({memory: '128MB', minInstances: 1, maxInstances: 1}).https.onRequest(async (req, res) => {
 	// on recv, get:
 	// tn, notify ID
-	res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
+	res.set('Access-Control-Allow-Origin', "*");
 	if (req.method === 'OPTIONS') {
 		// Send response to OPTIONS requests
 		res.set('Access-Control-Allow-Methods', 'POST');
@@ -437,7 +444,7 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 
 		let start = new Date().getTime();
 		// load all clinicians
-		const cliniciansDb = await admin.firestore().collection('clinicians').get();
+		const cliniciansDb = await db.collection('clinicians').get();
 		let clinicians = [];
 		cliniciansDb.forEach((doc) => {
 			let c = doc.data();
@@ -529,6 +536,40 @@ exports.matchPatient = functions.https.onRequest(async (req, res) => {
 		console.log(`Elapsed Time = ${new Date().getTime()-start}ms.`);
 	} catch (err) {
 		console.error("Failed to match patient: ", err.message);
+		res.status(500).json({'success': false});
+		return;
+	}
+})
+
+exports.getClinicians = functions.region('us-east4').runWith({memory: '128MB'}).https.onRequest(async (req, res) => {
+	res.set('Access-Control-Allow-Origin', "*");
+	if (req.method === 'OPTIONS') {
+		// Send response to OPTIONS requests
+		res.set('Access-Control-Allow-Methods', 'POST');
+		res.set('Access-Control-Allow-Headers', 'Content-Type');
+		res.status(204).send('');
+		return;
+	}
+
+	try {
+		let start = new Date().getTime();
+		// load all clinicians
+		const cliniciansDb = await db.collection('clinicians').get();
+		let clinicians = [];
+		cliniciansDb.forEach((doc) => {
+			let c = doc.data();
+			clinicians.push({
+				"name": c.firstName + " " + c.lastName,
+				"img_url": c.img_url ? c.img_url : "https://storage.googleapis.com/brightside-375502-clinicians/unknown.jpeg",
+				"clinicianId": c.partitionKey,
+				"specialties": c.specialties.join(', '),
+			});
+		});
+
+		res.status(200).json(clinicians);
+		console.log(`Elapsed Time = ${new Date().getTime()-start}ms.`);
+	} catch (err) {
+		console.error("Failed to get clinicians: ", err.message);
 		res.status(500).json({'success': false});
 		return;
 	}
