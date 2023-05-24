@@ -138,7 +138,8 @@ exports.sendNotifies = functions.region('us-east4').runWith({memory: '128MB'}).h
 		appt: apptSlot,
 		ts: new Date().getTime(),
 		fulfilled: false,
-		flex: data.hasFlex
+		flex: data.hasFlex,
+		createdBy: ctx.auth.token.email || null
 	});
 
 	return {'success': true};
@@ -269,7 +270,7 @@ exports.notifyClinicians = functions.region('us-east4').runWith({memory: '128MB'
 exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInstances: 1, maxInstances: 1}).https.onRequest(async (req, res) => {
 	// on recv, get:
 		// tn, notify ID
-		res.set('Access-Control-Allow-Origin', "*");
+		res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
 		if (req.method === 'OPTIONS') {
 			// Send response to OPTIONS requests
 			res.set('Access-Control-Allow-Methods', 'POST');
@@ -425,7 +426,7 @@ exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInst
 exports.matchPatient = functions.region('us-east4').runWith({memory: '128MB', minInstances: 1, maxInstances: 1}).https.onRequest(async (req, res) => {
 	// on recv, get:
 	// tn, notify ID
-	res.set('Access-Control-Allow-Origin', "*");
+	res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
 	if (req.method === 'OPTIONS') {
 		// Send response to OPTIONS requests
 		res.set('Access-Control-Allow-Methods', 'POST');
@@ -542,10 +543,10 @@ exports.matchPatient = functions.region('us-east4').runWith({memory: '128MB', mi
 })
 
 exports.getClinicians = functions.region('us-east4').runWith({memory: '128MB'}).https.onRequest(async (req, res) => {
-	res.set('Access-Control-Allow-Origin', "*");
+	res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
 	if (req.method === 'OPTIONS') {
 		// Send response to OPTIONS requests
-		res.set('Access-Control-Allow-Methods', 'POST');
+		res.set('Access-Control-Allow-Methods', 'GET');
 		res.set('Access-Control-Allow-Headers', 'Content-Type');
 		res.status(204).send('');
 		return;
