@@ -563,7 +563,7 @@ exports.getClinicians = functions.region('us-east4').runWith({memory: '128MB'}).
 				"name": c.firstName + " " + c.lastName,
 				"img_url": c.img_url ? c.img_url : "https://storage.googleapis.com/brightside-375502-clinicians/unknown.jpeg",
 				"clinicianId": c.partitionKey,
-				"specialties": c.specialties.join(', '),
+				"specialties": c.specialties.sort().join(', '),
 			});
 		});
 
