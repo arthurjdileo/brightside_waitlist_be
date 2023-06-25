@@ -118,7 +118,7 @@ exports.sendNotifies = functions.region('us-east4').runWith({memory: '128MB'}).h
 				tn: patientData.tn,
 				clinician: clinicianData.firstName + " " + clinicianData.lastName,
 				clinicianId: clinician,
-				appt: apptSlot,
+				appt: apptSlot.getTime(),
 				sid: exec.sid,
 				ts: new Date().getTime(),
 				status: !hasErr ? 'sent' : 'failed',
@@ -135,7 +135,7 @@ exports.sendNotifies = functions.region('us-east4').runWith({memory: '128MB'}).h
 		notifyId: notifyId,
 		clinician: clinicianData.firstName + " " + clinicianData.lastName,
 		clinicianId: clinician,
-		appt: apptSlot,
+		appt: apptSlot.getTime(),
 		ts: new Date().getTime(),
 		fulfilled: false,
 		flex: data.hasFlex,
@@ -192,6 +192,12 @@ exports.receiveNotifies = functions.region('us-east4').runWith({memory: '128MB'}
 	}
 	const historyData = historyDoc.data();
 
+	const patientDoc = await db.collection('patients').doc(req.body.patientId).get();
+	if (!patientDoc.exists) {
+		console.error(`Error: Patient ${req.body.patientId} not found in Firestore`);
+	}
+	const patientData = patientDoc.data();
+
 	// if fulfilled, send rejection
 	if (historyData?.fulfilled) {
 		// send reject
@@ -204,6 +210,7 @@ exports.receiveNotifies = functions.region('us-east4').runWith({memory: '128MB'}
 		fulfilled: true,
 		patientId: req.body.patientId,
 		isLoaded: false,
+		patientName: patientData.firstName + " " + patientData.lastName
 	})
 
 	// remove notifies from db
@@ -339,6 +346,7 @@ exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInst
 				// general insurance
 				memberID: req.body?.memberId,
 				provider: req.body?.provider,
+				payer: req.body?.payer,
 				primaryCardHolder: capitalizeWords(req.body?.cardHolder),
 				primaryCardHolderDOB: req.body?.cardHolderDob,
 				relationshipToInsured: req.body?.relationshipToInsured,
@@ -369,7 +377,8 @@ exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInst
 				timePreference: req.body?.timePreference,
 				selectedClinician: req.body?.selectedClinician,
 				insFront: frontPath,
-				insBack: backPath
+				insBack: backPath,
+				assignedClinicians: []
 			};
 			await db.collection('patients').doc(patientUUID).set(payload);
 			console.log(`Added user ${req.body?.firstName} ${req.body?.lastName},${patientUUID}. DB Elapsed Time = ${new Date().getTime()-start}ms.`);
@@ -382,7 +391,8 @@ exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInst
 					clinician: 'pending',
 					patient: patientUUID,
 					ts: new Date().getTime(),
-					modifiedBy: "Intake Form"
+					modifiedBy: "Intake Form",
+					patientName: payload.firstName + " " + payload.lastName
 				});
 			} else if (req.body?.selectedClinician == "Flex") {
 				console.log(`${patientUUID} assigned to flex queue.`);
@@ -390,7 +400,8 @@ exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInst
 					clinician: 'flex',
 					patient: patientUUID,
 					ts: new Date().getTime(),
-					modifiedBy: "Intake Form"
+					modifiedBy: "Intake Form",
+					patientName: payload.firstName + " " + payload.lastName
 				});
 			} else if (req.body?.type_of_care == 'therapy') {
 				console.log(`${patientUUID} assigned to ${req.body?.selectedClinician}.`);
@@ -398,8 +409,15 @@ exports.addUser = functions.region('us-east4').runWith({memory: '128MB', minInst
 					clinician: req.body?.selectedClinician,
 					patient: patientUUID,
 					ts: new Date().getTime(),
-					modifiedBy: "Intake Form"
+					modifiedBy: "Intake Form",
+					patientName: payload.firstName + " " + payload.lastName
 				});
+
+				await db.collection('patients').doc(patientUUID).update({
+					assignedClinicians: [
+						{partitionKey: req.body?.selectedClinician, name: req.body?.selectedClinicianName}
+					]
+				})
 			}
 
 
