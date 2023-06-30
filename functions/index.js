@@ -18,7 +18,7 @@ const twilio = require('twilio')(accountSid, authToken);
 
 const bucketName = process.env.STORAGE_BUCKET;
 
-const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric'};
+const timeOptions = options = {weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric', timeZone: 'UTC'};
 
 function capitalizeWords(str) {
 	const words = str.split(' ');
