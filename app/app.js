@@ -584,6 +584,27 @@ api.post('/eligibility', jsonParser, async (req, res) => {
 })
 
 api.post('/sendNotify', jsonParser, async (req, res) => {
+	//auth
+	if (!req.headers.authorization || req.headers.authorization.split(' ').length === 0) {
+		res.status(403).send({'success': false});
+		return;
+	}
+	const token = req.headers.authorization.split(' ')[1];
+	let userEmail = null;
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({'success': false});
+			return;
+		}
+	} catch (err) {
+		console.error("Failed to decode token: ", err, token);
+		res.status(403).send({'success': false});
+		return;
+	}
+	
 	// list of patients
 	// clinician
 	// appt datetime
@@ -684,7 +705,7 @@ api.post('/sendNotify', jsonParser, async (req, res) => {
 		ts: new Date().getTime(),
 		fulfilled: false,
 		flex: req.body.hasFlex,
-		createdBy: ctx.auth.token.email || null
+		createdBy: userEmail
 	});
 
 	res.send({'success': true});
