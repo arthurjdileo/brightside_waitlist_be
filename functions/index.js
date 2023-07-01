@@ -146,7 +146,7 @@ exports.sendNotifies = functions.region('us-east4').runWith({memory: '128MB'}).h
 })
 
 exports.receiveNotifies = functions.region('us-east4').runWith({memory: '128MB'}).https.onRequest(async (req, res) => {
-// on recv, get:
+	// on recv, get:
 	// tn, notify ID
 	res.set('Access-Control-Allow-Origin', "*");
 	if (req.method === 'OPTIONS') {
