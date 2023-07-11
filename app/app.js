@@ -19,9 +19,9 @@ const db = initializeFirestore(app, {
 	preferRest: true
 })
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const twilio = require('twilio')(accountSid, authToken);
+// const accountSid = process.env.TWILIO_ACCOUNT_SID;
+// const authToken = process.env.TWILIO_AUTH_TOKEN;
+// const twilio = require('twilio')(accountSid, authToken);
 
 const bucketName = process.env.STORAGE_BUCKET;
 
@@ -44,7 +44,7 @@ function capitalizeWords(str) {
 
 // cors
 const whitelist = [
-	'https://patient.brightsidecounseling.org', 'https://portal.brightsidecounseling.org'
+	'https://patient.brightsidecounseling.org', 'https://portal.brightsidecounseling.org', 'http://localhost:4200'
 ]
 api.use(cors({
 	"origin": function (origin, cb) {
@@ -709,6 +709,172 @@ api.post('/sendNotify', jsonParser, async (req, res) => {
 	});
 
 	res.send({'success': true});
+})
+
+api.get('/admin/users', jsonParser, async (req, res) => {
+	//auth
+	if (!req.headers.authorization || req.headers.authorization.split(' ').length === 0) {
+		res.status(403).send({'success': false});
+		return;
+	}
+	const token = req.headers.authorization.split(' ')[1];
+	let userEmail = null;
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({'success': false});
+			return;
+		}
+		let user = await admin.auth().getUserByEmail(userEmail);
+		if (!user.customClaims?.role || user.customClaims.role != 'admin') {
+			res.status(403).send({'success': false});
+			return;
+		}
+		console.log(`${userEmail} requested user list.`);
+		let users = [];
+		// **only lists first 1k users**
+		admin.auth().listUsers(1000)
+		.then((listUsersResult) => {
+			listUsersResult.users.forEach((u) => {
+				let us = u.toJSON();
+				if (us.disabled) return;
+				delete us.disabled;
+				delete us.emailVerified;
+				delete us.passwordHash;
+				delete us.passwordSalt;
+				delete us.providerData;
+				delete us.tokensValidAfterTime;
+				delete us.disabled;
+				if (!us.customClaims?.img_url) {
+					us.customClaims.img_url = 'https://storage.googleapis.com/brightside-375502-clinicians/unknown.jpeg';
+				}
+				users.push(us);
+			})
+			res.status(200).json(users);
+		})
+
+
+	} catch (err) {
+		console.error("Failed to decode token: ", err, token);
+		res.status(403).send({'success': false});
+		return;
+	}
+})
+
+api.delete('/admin/users/:uid', jsonParser, async (req, res) => {
+	//auth
+	if (!req.headers.authorization || req.headers.authorization.split(' ').length === 0) {
+		res.status(403).send({'success': false});
+		return;
+	}
+	if (!req.params['email']) {
+		res.status(400).send('');
+		return;
+	}
+	const token = req.headers.authorization.split(' ')[1];
+	let userEmail = null;
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({'success': false});
+			return;
+		}
+		let user = await admin.auth().getUserByEmail(userEmail);
+		if (!user.customClaims?.role || user.customClaims.role != 'admin') {
+			res.status(403).send({'success': false});
+			return;
+		}
+
+	} catch (err) {
+		console.error("Failed to decode token: ", err, token);
+		res.status(403).send({'success': false});
+		return;
+	}
+
+	try {
+		// refresh token is expired
+		await admin.auth().deleteUser(req.params.uid);
+
+
+	} catch (err) {
+		console.error("Failed to delete user", err);
+		res.status(500).send('');
+		return;
+	}
+})
+
+// update user
+api.post('/admin/users/:uid', jsonParser, async (req, res) => {
+	//auth
+	if (!req.headers.authorization || req.headers.authorization.split(' ').length === 0) {
+		res.status(403).send({'success': false});
+		return;
+	}
+	if (!req.body.email || !req.body.displayName || !req.body.role) {
+		res.status(400).send('');
+		return;
+	}
+	const token = req.headers.authorization.split(' ')[1];
+	let userEmail = null;
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({'success': false});
+			return;
+		}
+		let user = await admin.auth().getUserByEmail(userEmail);
+		if (!user.customClaims?.role || user.customClaims.role != 'admin') {
+			res.status(403).send({'success': false});
+			return;
+		}
+
+	} catch (err) {
+		console.error("Failed to decode token: ", err, token);
+		res.status(403).send({'success': false});
+		return;
+	}
+
+	try {
+		await admin.auth().updateUser(req.params["uid"], {
+			email: req.body.email,
+			displayName: req.body.displayName,
+		});
+
+		const user = await admin.auth().getUser(req.params['uid']);
+		let claims = user.customClaims;
+
+		// only switch from staff/admin
+		if (claims.role == 'clinician' && claims.role != req.body.role) {
+			res.status(400).send('')
+			return;
+		}
+
+		if ((claims.role == 'staff' || claims.role == 'admin') && !(['admin', 'staff'].includes(req.body.role))) {
+			res.status(400).send('');
+			return;
+		}
+
+		claims.role = req.body.role;
+		if (req.body.img_url) {
+			claims.img_url = req.body.img_url;
+		}
+
+		await admin.auth().setCustomUserClaims(req.params['uid'], claims);
+
+		// revoke their refresh token
+		await admin.auth().revokeRefreshTokens(req.params['uid']);
+		res.status(200).send("");
+	} catch (err) {
+		console.error("Failed to update user: ", err);
+		res.status(500).send({'success': false});
+		return;
+	}
 })
 
 api.listen(port, () => {
