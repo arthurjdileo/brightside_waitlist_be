@@ -19,9 +19,9 @@ const db = initializeFirestore(app, {
 	preferRest: true
 })
 
-// const accountSid = process.env.TWILIO_ACCOUNT_SID;
-// const authToken = process.env.TWILIO_AUTH_TOKEN;
-// const twilio = require('twilio')(accountSid, authToken);
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const twilio = require('twilio')(accountSid, authToken);
 
 const bucketName = process.env.STORAGE_BUCKET;
 
@@ -342,6 +342,15 @@ api.post('/addUser', jsonParser, async (req, res) => {
 					{ partitionKey: req.body?.selectedClinician, name: req.body?.selectedClinicianName }
 				]
 			})
+		} else if (req.body?.type_of_care == 'medical') {
+			console.log(`${patientUUID} assigned to flex queue.`);
+			await db.collection('waitlists').doc(patientUUID).set({
+				clinician: 'medical',
+				patient: patientUUID,
+				ts: new Date().getTime(),
+				modifiedBy: "Intake Form",
+				patientName: payload.firstName + " " + payload.lastName
+			});
 		}
 
 
