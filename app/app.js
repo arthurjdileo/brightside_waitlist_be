@@ -25,7 +25,7 @@ const twilio = require('twilio')(accountSid, authToken);
 
 const bucketName = process.env.STORAGE_BUCKET;
 
-const timeOptions = options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric', timeZone: 'UTC' };
+const timeOptions = options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', hour12: true, minute: 'numeric', hour: 'numeric' };
 
 let cache = {
 };
@@ -763,6 +763,40 @@ api.get('/admin/users', jsonParser, async (req, res) => {
 			})
 			res.status(200).json(users);
 		})
+
+
+	} catch (err) {
+		console.error("Failed to decode token: ", err, token);
+		res.status(403).send({'success': false});
+		return;
+	}
+})
+
+api.get('/admin/numPatients', jsonParser, async (req, res) => {
+	//auth
+	if (!req.headers.authorization || req.headers.authorization.split(' ').length === 0) {
+		res.status(403).send({'success': false});
+		return;
+	}
+	const token = req.headers.authorization.split(' ')[1];
+	let userEmail = null;
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({'success': false});
+			return;
+		}
+		let user = await admin.auth().getUserByEmail(userEmail);
+		if (!user.customClaims?.role || user.customClaims.role != 'admin') {
+			res.status(403).send({'success': false});
+			return;
+		}
+		console.log(`${userEmail} requested num patients.`);
+		
+		const snapshot = await db.collection('patients').count().get();
+		res.status(200).json({numPatients: snapshot.data().count});
 
 
 	} catch (err) {
