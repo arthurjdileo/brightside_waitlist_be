@@ -337,10 +337,11 @@ api.post('/addUser', jsonParser, async (req, res) => {
 				patientName: payload.firstName + " " + payload.lastName
 			});
 
-			await db.collection('patients').doc(patientUUID).update({
-				assignedClinicians: [
-					{ partitionKey: req.body?.selectedClinician, name: req.body?.selectedClinicianName }
-				]
+			await db.collection('assignedClinicians').doc(`${patientUUID}_${selectedClinician}`).set({
+				clinician:req.body?.selectedClinician,
+				clinicianName: req.body?.selectedClinicianName,
+				patient:patientUUID,
+				patientName: payload.firstName + " " + payload.lastName
 			})
 		} else if (req.body?.type_of_care == 'medical') {
 			console.log(`${patientUUID} assigned to flex queue.`);
