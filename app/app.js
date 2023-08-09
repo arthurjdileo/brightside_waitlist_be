@@ -337,7 +337,7 @@ api.post('/addUser', jsonParser, async (req, res) => {
 				patientName: payload.firstName + " " + payload.lastName
 			});
 
-			await db.collection('assignedClinicians').doc(`${patientUUID}_${selectedClinician}`).set({
+			await db.collection('assignedClinicians').doc(`${patientUUID}_${req.body?.selectedClinician}`).set({
 				clinician:req.body?.selectedClinician,
 				clinicianName: req.body?.selectedClinicianName,
 				patient:patientUUID,
@@ -357,7 +357,7 @@ api.post('/addUser', jsonParser, async (req, res) => {
 
 	} catch (err) {
 		console.error("Failed to insert new patient: ", err.message);
-		if (payload) console.error(JSON.stringify(payload));
+		console.error(JSON.stringify(payload));
 		res.status(500).json({ 'success': false });
 		return;
 	}
