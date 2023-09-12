@@ -1,0 +1,2 @@
+gcloud config set project brightside-375502
+gcloud app deploy

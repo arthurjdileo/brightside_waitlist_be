@@ -268,6 +268,7 @@ api.post('/addUser', jsonParser, async (req, res) => {
 			firstName: capitalizeWords(req.body?.firstName),
 			lastName: capitalizeWords(req.body?.lastName),
 			gender: req.body?.gender,
+			practice: req.body.practice,
 			// general insurance
 			memberID: req.body?.memberId,
 			provider: req.body?.provider,
