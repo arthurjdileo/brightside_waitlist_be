@@ -67,6 +67,7 @@ api.get('/clinicians', async (req, res) => {
 				"img_url": c.img_url ? c.img_url : "https://storage.googleapis.com/brightside-375502-clinicians/unknown.jpeg",
 				"clinicianId": c.partitionKey,
 				"specialties": c.specialties.sort().join(', '),
+				"practice": c.practice
 			});
 		});
 
@@ -497,7 +498,8 @@ api.post('/eligibility', jsonParser, async (req, res) => {
 			"Highmark": "01136",
 			"Magellan": "00676",
 			"Optum": "UHG007",
-			"United Healthcare": "00192"
+			"United Healthcare": "00192",
+			"Trustmark": "00189"
 		};
 		console.log("Got Eligibility Query");
 		console.log(req.body);
