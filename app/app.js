@@ -816,10 +816,7 @@ api.delete('/admin/users/:uid', jsonParser, async (req, res) => {
 		res.status(403).send({'success': false});
 		return;
 	}
-	if (!req.params['email']) {
-		res.status(400).send('');
-		return;
-	}
+
 	const token = req.headers.authorization.split(' ')[1];
 	let userEmail = null;
 	try {
@@ -843,9 +840,9 @@ api.delete('/admin/users/:uid', jsonParser, async (req, res) => {
 	}
 
 	try {
-		// refresh token is expired
-		await admin.auth().deleteUser(req.params.uid);
 
+		await admin.auth().deleteUser(req.params.uid);
+		res.status(200).send({'success': true});
 
 	} catch (err) {
 		console.error("Failed to delete user", err);
