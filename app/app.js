@@ -4,6 +4,7 @@ const api = express();
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const { initializeFirestore } = require('firebase-admin/firestore');
+const { getStorage } = require('firebase-admin/storage');
 // The Firebase Admin SDK to access Firestore.
 const admin = require('firebase-admin');
 const app = admin.initializeApp();
@@ -18,6 +19,7 @@ const port = process.env.PORT || 8080;
 const db = initializeFirestore(app, {
 	preferRest: true
 })
+const docBucket = getStorage().bucket('brightside-375502-docs');
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -194,6 +196,61 @@ api.post('/match', jsonParser, async (req, res) => {
 		console.log(`Elapsed Time = ${new Date().getTime() - start}ms.`);
 	} catch (err) {
 		console.error("Failed to match patient: ", err.message);
+		res.status(500).json({ 'success': false });
+		return;
+	}
+})
+
+api.post('/document', jsonParser, async (req, res) => {
+	//auth
+	if (!req.headers.authorization || req.headers.authorization.split(' ').length === 0) {
+		res.status(403).send({'success': false});
+		return;
+	}
+	const token = req.headers.authorization.split(' ')[1];
+	let userEmail = null;
+	let filePath = req.body.filePath;
+
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({'success': false});
+			return;
+		}
+		let user = await admin.auth().getUserByEmail(userEmail);
+
+		let patientId = filePath.split('/')[0];
+
+		let canAccess = false;
+		let isUserAdminOrStaff =  user.customClaims.role == 'admin' || user.customClaims.role == 'staff';
+		if (isUserAdminOrStaff) {
+			canAccess = true;
+		}
+		// they are a clinician
+		let assignedDoc = await db.collection('assignedClinicians').doc(patientId + "_" + user.customClaims.clinicianId).get();
+		if (!canAccess && assignedDoc.exists) {
+			canAccess = true;
+		}
+
+		if (!canAccess) {
+			res.status(403).send({'success': false});
+			return;
+		}
+		const md = await docBucket.file(filePath).getMetadata();
+		console.log(md[0])
+		const f = await docBucket.file(filePath).download();
+		const fileContents = f[0];
+
+		res.setHeader('Content-Type', md[0].contentType);
+		res.setHeader('Content-Length', md[0].size);
+		res.setHeader('Content-Disposition', `attachment; ${md[0].contentDisposition.split(';')}`);
+		res.write(fileContents, 'binary');
+		res.end();
+		console.log(`${userEmail} has downloaded ${filePath}`);
+	} catch (err) {
+		console.error("Failed to get filepath: ", err.message, filePath);
 		res.status(500).json({ 'success': false });
 		return;
 	}
