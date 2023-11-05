@@ -582,7 +582,7 @@ api.post('/eligibility', jsonParser, async (req, res) => {
 			let resp = {
 				status: "Failed",
 			}
-			res.status(500).send(resp);
+			res.status(400).send(resp);
 			return;
 		}
 
