@@ -517,7 +517,6 @@ api.post('/receiveNotify', jsonParser, async (req, res) => {
 })
 
 api.post('/eligibility', jsonParser, async (req, res) => {
-	res.set('Access-Control-Allow-Origin', "https://patient.brightsidecounseling.org");
 	if (req.method === 'OPTIONS') {
 		// Send response to OPTIONS requests
 		res.set('Access-Control-Allow-Methods', 'POST');
