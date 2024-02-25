@@ -235,15 +235,20 @@ exports.notifyClinicians = functions.region('us-east4').runWith({memory: '128MB'
 	let clinicians = [];
 	let pending = {};
 
-	pendingAssignment.forEach((doc) => {
+	for (let doc of pendingAssignment.docs) {
 		let p = doc.data();
+		if (typeof p.textsSent != 'undefined' && p.textsSent > 10) continue;
 		if (!(p.clinician in pending)) {
 			pending[p.clinician] = [];
 			pending[p.clinician].push(p.patient);
 		} else {
 			pending[p.clinician].push(p.patient);
 		}
-	});
+		let payload = {};
+		if (typeof p.textsSent === 'undefined') payload.textsSent = 1;
+		else payload.textsSent = p.textsSent + 1;
+		await db.collection('pendingAssignment').doc(p.patient).update(payload)
+	}
 
 	cliniciansDb.forEach((doc) => {
 		let c = doc.data();
