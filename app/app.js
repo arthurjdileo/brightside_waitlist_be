@@ -46,7 +46,7 @@ function capitalizeWords(str) {
 
 // cors
 const whitelist = [
-	'https://patient.brightsidecounseling.org', 'https://portal.brightsidecounseling.org', 'http://localhost:4200'
+	'https://patient.brightsidecounseling.org', 'https://portal.brightsidecounseling.org', "http://localhost:4200"
 ]
 api.use(cors({
 	"origin": function (origin, cb) {
@@ -101,10 +101,11 @@ api.post('/match', jsonParser, async (req, res) => {
 		let interface = req.body.interface;
 		let dayPreference = req.body.dayPreference;
 		let timePreference = req.body.timePreference;
+		let practice = req.body.practice;
 
 		let start = new Date().getTime();
 		// load all clinicians
-		const cliniciansDb = await db.collection('clinicians').get();
+		const cliniciansDb = await db.collection('clinicians').where('practice', 'array-contains', practice).get();
 		let clinicians = [];
 		cliniciansDb.forEach((doc) => {
 			let c = doc.data();
@@ -556,7 +557,13 @@ api.post('/eligibility', jsonParser, async (req, res) => {
 			"Magellan": "00676",
 			"Optum": "UHG007",
 			"United Healthcare": "00192",
-			"Trustmark": "00189"
+			"Trustmark": "00189",
+			"IBC Personal Choice": "00115",
+			"Independence Administrators": "00435",
+			"Keystone Health Plan East": "00115",
+			"Meritain Health": "00893",
+			"OptumHealth Behavioral": "UHG007",
+			"Highmark Blue Cross": "S001",
 		};
 		console.log("Got Eligibility Query");
 		console.log(req.body);
