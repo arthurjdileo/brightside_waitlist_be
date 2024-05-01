@@ -39,6 +39,8 @@ const timeOptions = (options = {
 
 let cache = {};
 const claimVersion = "v1";
+let claimMetadataCache = null;
+let cptCache = {};
 
 function capitalizeWords(str) {
 	const words = str.split(" ");
@@ -1195,49 +1197,54 @@ api.post("/admin/users/:uid", jsonParser, async (req, res) => {
 // claims
 api.post("/submit_claim", jsonParser, async (req, res) => {
 	//auth
-	if (
-		!req.headers.authorization ||
-		req.headers.authorization.split(" ").length === 0
-	) {
-		res.status(403).send({ success: false });
-		return;
-	}
-	if (!req.body.claims || req.body.claims.length == 0) {
-		res.status(400).send("");
-		return;
-	}
-	const token = req.headers.authorization.split(" ")[1];
-	let userEmail = null;
-	let user = null;
-	try {
-		let decoded = await app.auth().verifyIdToken(token, true);
-		userEmail = decoded.email;
-		if (!userEmail) {
-			console.error("Failed to decode token: ", token);
-			res.status(403).send({ success: false });
-			return;
-		}
-		user = await admin.auth().getUserByEmail(userEmail);
-		// todo: add role check
-		if (!user || user.customClaims?.role != "admin") {
-			res.status(403).send({ success: false });
-			return;
-		}
-	} catch (err) {
-		console.error("Failed to decode token: ", err, token);
-		res.status(403).send({ success: false });
-		return;
-	}
+	// if (
+	// 	!req.headers.authorization ||
+	// 	req.headers.authorization.split(" ").length === 0
+	// ) {
+	// 	res.status(403).send({ success: false });
+	// 	return;
+	// }
+	// if (!req.body.claims || req.body.claims.length == 0) {
+	// 	res.status(400).send("");
+	// 	return;
+	// }
+	// const token = req.headers.authorization.split(" ")[1];
+	// let userEmail = null;
+	// let user = null;
+	// try {
+	// 	let decoded = await app.auth().verifyIdToken(token, true);
+	// 	userEmail = decoded.email;
+	// 	if (!userEmail) {
+	// 		console.error("Failed to decode token: ", token);
+	// 		res.status(403).send({ success: false });
+	// 		return;
+	// 	}
+	// 	user = await admin.auth().getUserByEmail(userEmail);
+	// 	// todo: add role check
+	// 	if (!user || user.customClaims?.role != "admin") {
+	// 		res.status(403).send({ success: false });
+	// 		return;
+	// 	}
+	// } catch (err) {
+	// 	console.error("Failed to decode token: ", err, token);
+	// 	res.status(403).send({ success: false });
+	// 	return;
+	// }
 
 	// generate unique identifers
 	const isn = await fetchAndIncrementInterchangeCtlNo();
 
 	// selected claims grouped by patient
 	const session = await fetchSession(req.body.sessionId);
+	const cptInfo = await lookupCPT(session.cptCodes[0]);
+
+	// computed here since tz will always be EST
+	const dateOfService = formatDate(session.dateOfService, true);
+
+	const patient = fetchPatient(session.patient);
 
 	// this is the raw claim data without header/footer
 	let claimData = "";
-	let ptCounter = 0;
 
 	// generate pt info payload
 	// use first as a sample
@@ -1250,31 +1257,21 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 
 	// now every claim has billable activities
 	// in the form of service lines
-	claimData += await fillClmTemplate(claim, providerCtlNo);
+	claimData += await fillClmTemplate(session, providerCtlNo);
 	claimData += "\n";
-			// for every billable activity for this day "service line"
-			for (let i = 0; i < claim.totalSessions; i++) {
-				// add delimiter
-				claimData += await addSvcLineDelimiter(i + 1);
-				let service = {
-					cptCode: claim.cptCode,
-					cptCharge: (claim.cptCharge / 100).toString(),
-					dateOfService: claim.dateOfService.replaceAll("-", ""),
-					timestamp: claim.sessionTimestamps[i],
-					units: 0,
-				};
-				// put all units in first svc line
-				if (i == 0) {
-					service.units = claim.units;
-				}
-				claimData += await fillSvcTemplate(service, providerCtlNo);
-				claimData += "\n";
-			}
-		}
 
-		// add pt delimiter
-		if (i != pts.length - 1) claimData += await addPtDelimiter(ptCounter++);
-	}
+	// add delimiter
+	claimData += await addSvcLineDelimiter(1);
+
+	// for every billable activity for this day "service line"
+	let service = {
+		cptCode: cptInfo.cptCode,
+		cptCharge: (cptInfo.charge / 100).toString(),
+		dateOfService: dateOfService.replaceAll("-", ""),
+		units: 1,
+	};
+	claimData += await fillSvcTemplate(service, providerCtlNo);
+	claimData += "\n";
 
 	// generate header and footer
 	let header = await fillHeaderTemplate(isn);
@@ -1287,23 +1284,19 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 
 	let claimFileUUID = uuidv4();
 
-	await uploadDataToClaimBucket(claimData, claimFileUUID + ".txt");
-
-	// update claim metadata
-	markClaimsSubmitted(req.body.claims);
-
-	// store to file record
-	storeFileDetails(claimFileUUID, userEmail);
-
-	res.setHeader("Content-Type", "text/plain");
-	res.setHeader("Content-Length", Buffer.byteLength(claimData));
-	res.setHeader(
-		"Content-Disposition",
-		`attachment; filename="${claimFileUUID + ".txt"}"`
-	);
-	res.write(claimData, "binary");
-	res.end();
+	console.log(claimData);
 });
+
+async function lookupCPT(cptCode) {
+	if (typeof cptCache[cptCode] != "undefined") {
+		return cptCache[cptCode];
+	}
+	const docRef = db.collection("cptCodes").doc(cptCode);
+	const docSnapshot = await docRef.get();
+	const docData = docSnapshot.data();
+	cptCache[cptCode] = docData;
+	return docData;
+}
 
 // this is to fetch the interchange control number
 // used in the ISA and IEA segments
@@ -1406,6 +1399,28 @@ async function fetchSession(sessionId) {
 	return docData;
 }
 
+async function fetchPatient(patientId) {
+	const docRef = await db.collection("patients").doc(patientId).get();
+	if (!docRef.exists) {
+		console.error("FAILED TO FIND PATIENT FOR ", patientId);
+		throw new Error("patient does not exist", patientId);
+	}
+
+	const docData = docRef.data();
+	return docData;
+}
+
+async function fetchClaimTemplate(template_name) {
+	if (claimMetadataCache != null) {
+		return claimMetadataCache[template_name];
+	}
+	const docRef = db.collection("claimMetadata").doc(claimVersion);
+	const docSnapshot = await docRef.get();
+	const docData = docSnapshot.data();
+	claimMetadataCache = docData;
+	return docData[template_name];
+}
+
 async function fillPtTemplate(session) {
 	let template = await fetchClaimTemplate("ptTemplate");
 	let ptData = template;
@@ -1429,25 +1444,141 @@ async function fillPtTemplate(session) {
 	return ptData;
 }
 
-async function fillClmTemplate(claim, providerCtlNo) {
+async function fillClmTemplate(session, providerCtlNo) {
 	let template = await fetchClaimTemplate("clmTemplate");
 	let clmData = template;
 
 	clmData = clmData.replaceAll("{{provider_ctl_no}}", providerCtlNo);
 	clmData = clmData.replaceAll(
 		"{{total_claim_charge}}",
-		formatCost(claim.totalCharge)
+		formatCost(session.totalCharge)
 	);
-	clmData = clmData.replaceAll("{{pt_service_auth_ref}}", claim.auth.id);
 	clmData = clmData.replaceAll(
 		"{{diag_code}}",
-		claim.diagCode.replaceAll(".", "")
+		session.diagnosisCodes[0].code.replaceAll(".", "")
 	);
-	clmData = clmData.replaceAll("{{provider_last}}", claim.clinicianLast);
-	clmData = clmData.replaceAll("{{provider_first}}", claim.clinicianFirst);
-	clmData = clmData.replaceAll("{{provider_npi}}", claim.clinicianNpi);
+	clmData = clmData.replaceAll("{{provider_last}}", session.clinicianLast);
+	clmData = clmData.replaceAll("{{provider_first}}", session.clinicianFirst);
+	clmData = clmData.replaceAll("{{provider_npi}}", session.clinicianNpi);
 
 	return clmData;
+}
+
+async function fillSvcTemplate(svc, providerCtlNo) {
+	let template = await fetchClaimTemplate("svcLineTemplate");
+	let svcData = template;
+
+	svcData = svcData.replaceAll("{{provider_ctl_no}}", providerCtlNo);
+	svcData = svcData.replaceAll("{{cpt_code}}", svc.cptCode);
+	svcData = svcData.replaceAll("{{cpt_charge}}", svc.cptCharge);
+	svcData = svcData.replaceAll("{{num_units}}", svc.units);
+	svcData = svcData.replaceAll("{{date_of_service}}", svc.dateOfService);
+	svcData = svcData.replaceAll("{{start_to_end_HHMM}}", svc.timestamp);
+
+	return svcData;
+}
+
+async function fillHeaderTemplate(isn) {
+	let template = await fetchClaimTemplate("headerTemplate");
+	let header = template;
+
+	let date = new Date().getTime();
+	let formattedDate = formatDate(date);
+	let formattedTime = formatTime(date, true);
+
+	header = header.replaceAll("{{payer_name}}");
+	header = header.replaceAll("{{payer_id}}");
+
+	header = header.replaceAll("{{YYMMDD}}", formattedDate.substring(2));
+	header = header.replaceAll(
+		"{{HHMM_24hr}}",
+		formattedTime.substring(0, formattedTime.length - 2)
+	);
+	header = header.replaceAll("{{HHMM_24hr_ss}}", formattedTime);
+	header = header.replaceAll("{{isn}}", isn);
+	header = header.replaceAll("{{YYYYMMDD}}", formattedDate);
+
+	return header;
+}
+
+async function addSvcLineDelimiter(svcCount) {
+	let template = await fetchClaimTemplate("svcLineDelimTemplate");
+	let delimData = template;
+
+	delimData = delimData.replace("{{counter}}", svcCount);
+	delimData += "\n";
+
+	return delimData;
+}
+
+async function addFooter(isn) {
+	let template = await fetchClaimTemplate("footerTemplate");
+	let footer = template;
+
+	footer = footer.replaceAll("{{isn}}", isn);
+
+	return footer;
+}
+
+function formatDate(n, includeDash = false) {
+	let d = new Date(n);
+	return `${d.getFullYear()}${includeDash ? "-" : ""}${(d.getMonth() + 1)
+		.toString()
+		.padStart(2, "0")}${includeDash ? "-" : ""}${d
+		.getDate()
+		.toString()
+		.padStart(2, "0")}`;
+}
+
+function fillFooter(claimData, numSegments) {
+	claimData = claimData.replaceAll("{{total_segments}}", numSegments);
+
+	return claimData;
+}
+
+function formatTime(n, withSeconds = false) {
+	const date = new Date(n);
+	// Extract hours and minutes
+	const hours = date.getHours();
+	const minutes = date.getMinutes();
+
+	// Format hours and minutes to ensure two digits
+	const formattedHours = hours.toString().padStart(2, "0");
+	const formattedMinutes = minutes.toString().padStart(2, "0");
+
+	// Concatenate hours and minutes in HHMM format
+	if (withSeconds) {
+		const seconds = date.getSeconds();
+		const formattedSeconds = seconds.toString().padStart(2, "0");
+		return formattedHours + formattedMinutes + formattedSeconds;
+	}
+	return formattedHours + formattedMinutes;
+}
+
+function getNumSegments(claimData) {
+	let segments = claimData.split("\n");
+
+	let tx_count = 0;
+	let in_tx = false;
+
+	for (let segment of segments) {
+		if (segment.startsWith("ST")) {
+			in_tx = true;
+			tx_count = 1;
+		} else if (segment.startsWith("SE") && in_tx) {
+			tx_count += 1;
+			in_tx = false;
+		} else if (in_tx) {
+			tx_count += 1;
+		}
+	}
+
+	return tx_count;
+}
+
+function formatCost(costInt) {
+	const dollars = costInt / 100;
+	return dollars.toFixed(2).toString();
 }
 
 api.listen(port, () => {
