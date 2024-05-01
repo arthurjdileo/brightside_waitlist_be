@@ -399,6 +399,7 @@ api.post("/addUser", jsonParser, async (req, res) => {
 			indivDeductibleInNetRemaining: req.body?.indivDeductibleInNetRemaining,
 			planName: req.body?.planName,
 			subscriber: req.body?.subscriber,
+			payerId: req.body?.payerId,
 			// extras
 			primaryPhysician: capitalizeWords(req.body?.primaryCare),
 			referredBy: capitalizeWords(req.body?.referredBy),
@@ -1241,14 +1242,15 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	// computed here since tz will always be EST
 	const dateOfService = formatDate(session.dateOfService, true);
 
-	const patient = fetchPatient(session.patient);
+	const patient = await fetchPatient(session.patient);
+	const insurance = await fetchInsurance(patient.payerId);
 
 	// this is the raw claim data without header/footer
 	let claimData = "";
 
 	// generate pt info payload
 	// use first as a sample
-	claimData += await fillPtTemplate(session);
+	claimData += await fillPtTemplate(session, patient, insurance);
 	claimData += "\n";
 
 	// generate unique ID for claim
@@ -1257,7 +1259,7 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 
 	// now every claim has billable activities
 	// in the form of service lines
-	claimData += await fillClmTemplate(session, providerCtlNo);
+	claimData += await fillClmTemplate(session, insurance, providerCtlNo);
 	claimData += "\n";
 
 	// add delimiter
@@ -1274,7 +1276,7 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	claimData += "\n";
 
 	// generate header and footer
-	let header = await fillHeaderTemplate(isn);
+	let header = await fillHeaderTemplate(isn, insurance);
 	let footer = await addFooter(isn);
 
 	claimData = header + "\n" + claimData + footer;
@@ -1285,6 +1287,7 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	let claimFileUUID = uuidv4();
 
 	console.log(claimData);
+	res.sendStatus(200);
 });
 
 async function lookupCPT(cptCode) {
@@ -1410,6 +1413,17 @@ async function fetchPatient(patientId) {
 	return docData;
 }
 
+async function fetchInsurance(payerId) {
+	const docRef = await db.collection("insuranceMapping").doc(payerId).get();
+	if (!docRef.exists) {
+		console.error("FAILED TO FIND payerId FOR ", payerId);
+		throw new Error("payerid does not exist", payerId);
+	}
+
+	const docData = docRef.data();
+	return docData;
+}
+
 async function fetchClaimTemplate(template_name) {
 	if (claimMetadataCache != null) {
 		return claimMetadataCache[template_name];
@@ -1421,13 +1435,15 @@ async function fetchClaimTemplate(template_name) {
 	return docData[template_name];
 }
 
-async function fillPtTemplate(session) {
+async function fillPtTemplate(session, patient, insurance) {
 	let template = await fetchClaimTemplate("ptTemplate");
 	let ptData = template;
 
 	ptData = ptData.replaceAll("{{pt_last}}", session.lastName);
 	ptData = ptData.replaceAll("{{pt_first}}", session.firstName);
-	ptData = ptData.replaceAll("{{nyeis_ref}}", session.referenceNo);
+	ptData = ptData.replaceAll("{{group_name}}", patient.groupName);
+	ptData = ptData.replaceAll("{{claim_ind_code}}", insurance.indCode);
+	ptData = ptData.replaceAll("{{member_id}}", patient.memberId);
 	ptData = ptData.replaceAll("{{pt_st_addr}}", session.street);
 	ptData = ptData.replaceAll("{{pt_city}}", session.city);
 	ptData = ptData.replaceAll("{{pt_state}}", session.state);
@@ -1444,7 +1460,7 @@ async function fillPtTemplate(session) {
 	return ptData;
 }
 
-async function fillClmTemplate(session, providerCtlNo) {
+async function fillClmTemplate(session, insurance, providerCtlNo) {
 	let template = await fetchClaimTemplate("clmTemplate");
 	let clmData = template;
 
@@ -1460,6 +1476,9 @@ async function fillClmTemplate(session, providerCtlNo) {
 	clmData = clmData.replaceAll("{{provider_last}}", session.clinicianLast);
 	clmData = clmData.replaceAll("{{provider_first}}", session.clinicianFirst);
 	clmData = clmData.replaceAll("{{provider_npi}}", session.clinicianNpi);
+	clmData = clmData.replaceAll("{{payer_name}}", insurance.name);
+	clmData = clmData.replaceAll("{{payer_id}}", insurance.inovalonCode);
+	// clmData = clmData.replaceAll("{{facility_type_code}}", session.clinicianNpi);
 
 	return clmData;
 }
@@ -1478,7 +1497,7 @@ async function fillSvcTemplate(svc, providerCtlNo) {
 	return svcData;
 }
 
-async function fillHeaderTemplate(isn) {
+async function fillHeaderTemplate(isn, insurance) {
 	let template = await fetchClaimTemplate("headerTemplate");
 	let header = template;
 
@@ -1486,8 +1505,8 @@ async function fillHeaderTemplate(isn) {
 	let formattedDate = formatDate(date);
 	let formattedTime = formatTime(date, true);
 
-	header = header.replaceAll("{{payer_name}}");
-	header = header.replaceAll("{{payer_id}}");
+	header = header.replaceAll("{{payer_name}}", insurance.name);
+	header = header.replaceAll("{{payer_id}}", insurance.inovalonCode);
 
 	header = header.replaceAll("{{YYMMDD}}", formattedDate.substring(2));
 	header = header.replaceAll(
