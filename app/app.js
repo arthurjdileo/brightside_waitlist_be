@@ -744,6 +744,7 @@ api.post("/eligibility", jsonParser, async (req, res) => {
         status: eligibility?.PlanCoverageSummary?.Status
           ? eligibility?.PlanCoverageSummary?.Status
           : "Failed",
+        payerCode: translate[p],
         planName: eligibility?.PlanCoverageSummary?.PlanName
           ? eligibility?.PlanCoverageSummary?.PlanName
           : "N/A",
