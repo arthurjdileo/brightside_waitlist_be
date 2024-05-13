@@ -1232,6 +1232,8 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	// 	return;
 	// }
 
+	// TODO: DATA VERIFICATION
+
 	// generate unique identifers
 	const isn = await fetchAndIncrementInterchangeCtlNo();
 
@@ -1443,11 +1445,17 @@ async function fillPtTemplate(session, patient, insurance) {
 	ptData = ptData.replaceAll("{{pt_first}}", session.firstName);
 	ptData = ptData.replaceAll("{{group_name}}", patient.groupName);
 	ptData = ptData.replaceAll("{{claim_ind_code}}", insurance.indCode);
-	ptData = ptData.replaceAll("{{member_id}}", patient.memberId);
+	ptData = ptData.replaceAll("{{member_id}}", patient.memberID);
 	ptData = ptData.replaceAll("{{pt_st_addr}}", session.street);
 	ptData = ptData.replaceAll("{{pt_city}}", session.city);
 	ptData = ptData.replaceAll("{{pt_state}}", session.state);
 	ptData = ptData.replaceAll("{{pt_zip}}", session.zipCode);
+	ptData = ptData.replaceAll(
+		"{{patient_relate}}",
+		relationToSubToEdi(patient.relationshipToInsured)
+	);
+	ptData = ptData.replaceAll("{{payer_name}}", insurance.name);
+	ptData = ptData.replaceAll("{{payer_id}}", insurance.inovalonCode);
 	ptData = ptData.replaceAll(
 		"{{pt_dob_YYYYMMDD}}",
 		session.dob.replaceAll("-", "")
@@ -1458,6 +1466,25 @@ async function fillPtTemplate(session, patient, insurance) {
 	);
 
 	return ptData;
+}
+
+// https://med.noridianmedicare.com/web/jea/topics/claim-submission/patient-relationship-codes
+let relationshipCodeMapping = {
+	self: "18",
+	spouse: "1",
+	child: "19",
+	lifepartner: "29",
+	other: "G8",
+};
+
+function relationToSubToEdi(relationshipToIns) {
+	if (typeof relationshipCodeMapping[relationshipToIns] === "undefined") {
+		throw Error(
+			"Failed to locate relationship to insured. Got: ",
+			relationshipToIns
+		);
+	}
+	return relationshipCodeMapping[relationshipToIns];
 }
 
 async function fillClmTemplate(session, insurance, providerCtlNo) {
