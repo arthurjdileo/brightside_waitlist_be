@@ -355,9 +355,11 @@ api.post("/addUser", jsonParser, async (req, res) => {
     }
   }
 
+  let payload;
+
   try {
     let start = new Date().getTime();
-    let payload = {
+    payload = {
       // structural
       partitionKey: patientUUID,
       created: new Date().getTime(),
