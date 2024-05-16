@@ -37,7 +37,6 @@ const timeOptions = (options = {
 	hour: "numeric",
 });
 
-let cache = {};
 const claimVersion = "v1";
 let claimMetadataCache = null;
 let cptCache = {};
@@ -358,9 +357,11 @@ api.post("/addUser", jsonParser, async (req, res) => {
 		}
 	}
 
+	let payload;
+
 	try {
 		let start = new Date().getTime();
-		let payload = {
+		payload = {
 			// structural
 			partitionKey: patientUUID,
 			created: new Date().getTime(),
@@ -655,18 +656,6 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 		};
 		console.log("Got Eligibility Query");
 		console.log(req.body);
-		let cacheKey = translate[p] + memberID;
-		if (
-			Object.keys(cache).includes(cacheKey) &&
-			cache[cacheKey].ttl > new Date()
-		) {
-			// cache hit
-			console.log(`Hot Cache: ${JSON.stringify(cache[cacheKey].data)}`);
-			res.send(cache[cacheKey].data);
-			return;
-		} else {
-			delete cache[cacheKey];
-		}
 
 		let payload = await axios.post(
 			`https://api.pverify.com/Token`,
@@ -745,6 +734,7 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 				status: eligibility?.PlanCoverageSummary?.Status
 					? eligibility?.PlanCoverageSummary?.Status
 					: "Failed",
+				payerCode: translate[p],
 				planName: eligibility?.PlanCoverageSummary?.PlanName
 					? eligibility?.PlanCoverageSummary?.PlanName
 					: "N/A",
@@ -810,12 +800,10 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 					? eligibility?.HBPC_Deductible_OOP_Summary
 							?.FamilyDeductibleRemainingInNet?.Notes
 					: "",
-				payerCode: translate[p],
 			};
-			let ttlTwoWeeks = new Date();
-			ttlTwoWeeks.setDate(ttlTwoWeeks.getDate() + 2 * 7);
-			cache[translate[p] + memberID] = { data: resp, ttl: ttlTwoWeeks };
+
 			console.log(`Returning payload: ${JSON.stringify(resp)}`);
+			console.log(`Elapsed: ${new Date().getTime() - ts.getTime()}ms.`);
 			res.send(resp);
 		} catch (err) {
 			let resp = {
