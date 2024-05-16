@@ -1249,7 +1249,13 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 
 	// now every claim has billable activities
 	// in the form of service lines
-	claimData += await fillClmTemplate(session, insurance, providerCtlNo);
+	claimData += await fillClmTemplate(
+		session,
+		insurance,
+		cptInfo,
+		claimNo,
+		providerCtlNo
+	);
 	claimData += "\n";
 
 	// add delimiter
@@ -1258,10 +1264,16 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	// for every billable activity for this day "service line"
 	let service = {
 		cptCode: cptInfo.cptCode,
+		cptModifier: null,
 		cptCharge: (cptInfo.charge / 100).toString(),
 		dateOfService: dateOfService.replaceAll("-", ""),
 		units: 1,
+		placeOfService: session.placeOfService,
 	};
+	if (service.placeOfService === "Telehealth") {
+		// add modifier for telehealth
+		service.cptModifier = "95";
+	}
 	claimData += await fillSvcTemplate(service, providerCtlNo);
 	claimData += "\n";
 
@@ -1403,6 +1415,17 @@ async function fetchPatient(patientId) {
 	return docData;
 }
 
+async function fetchProvider(clinicianId) {
+	const docRef = await db.collection("clinicians").doc(clinicianId).get();
+	if (!docRef.exists) {
+		console.error("FAILED TO FIND CLINICIAN FOR ", clinicianId);
+		throw new Error("clinician does not exist", clinicianId);
+	}
+
+	const docData = docRef.data();
+	return docData;
+}
+
 async function fetchInsurance(payerId) {
 	const docRef = await db.collection("insuranceMapping").doc(payerId).get();
 	if (!docRef.exists) {
@@ -1429,8 +1452,8 @@ async function fillPtTemplate(session, patient, insurance) {
 	let template = await fetchClaimTemplate("ptTemplate");
 	let ptData = template;
 
-	ptData = ptData.replaceAll("{{pt_last}}", session.lastName);
-	ptData = ptData.replaceAll("{{pt_first}}", session.firstName);
+	ptData = ptData.replaceAll("{{pt_last}}", session.lastName.toUpperCase());
+	ptData = ptData.replaceAll("{{pt_first}}", session.firstName.toUpperCase());
 	ptData = ptData.replaceAll("{{group_name}}", patient.groupName);
 	ptData = ptData.replaceAll("{{claim_ind_code}}", insurance.indCode);
 	ptData = ptData.replaceAll("{{member_id}}", patient.memberID);
@@ -1475,25 +1498,44 @@ function relationToSubToEdi(relationshipToIns) {
 	return relationshipCodeMapping[relationshipToIns];
 }
 
-async function fillClmTemplate(session, insurance, providerCtlNo) {
+async function fillClmTemplate(
+	session,
+	insurance,
+	cptInfo,
+	claimNo,
+	providerCtlNo
+) {
 	let template = await fetchClaimTemplate("clmTemplate");
 	let clmData = template;
+
+	let clinician = await fetchProvider(session.clinician);
 
 	clmData = clmData.replaceAll("{{provider_ctl_no}}", providerCtlNo);
 	clmData = clmData.replaceAll(
 		"{{total_claim_charge}}",
-		formatCost(session.totalCharge)
+		formatCost(cptInfo.charge)
 	);
 	clmData = clmData.replaceAll(
 		"{{diag_code}}",
 		session.diagnosisCodes[0].code.replaceAll(".", "")
 	);
-	clmData = clmData.replaceAll("{{provider_last}}", session.clinicianLast);
-	clmData = clmData.replaceAll("{{provider_first}}", session.clinicianFirst);
-	clmData = clmData.replaceAll("{{provider_npi}}", session.clinicianNpi);
+	clmData = clmData.replaceAll(
+		"{{provider_last}}",
+		clinician.lastName.toUpperCase()
+	);
+	clmData = clmData.replaceAll(
+		"{{provider_first}}",
+		clinician.firstName.toUpperCase()
+	);
+	clmData = clmData.replaceAll("{{provider_npi}}", clinician.npi);
+	clmData = clmData.replaceAll("{{taxonomy_code}}", clinician.taxonomy);
 	clmData = clmData.replaceAll("{{payer_name}}", insurance.name);
 	clmData = clmData.replaceAll("{{payer_id}}", insurance.inovalonCode);
-	// clmData = clmData.replaceAll("{{facility_type_code}}", session.clinicianNpi);
+	clmData = clmData.replaceAll("{{claim_no}}", claimNo);
+	clmData = clmData.replaceAll(
+		"{{facility_type_code}}",
+		placeOfServiceToFacilityCode(session.placeOfService)
+	);
 
 	return clmData;
 }
@@ -1502,8 +1544,13 @@ async function fillSvcTemplate(svc, providerCtlNo) {
 	let template = await fetchClaimTemplate("svcLineTemplate");
 	let svcData = template;
 
+	let cptWithModifier = svc.cptCode;
+	if (svc.cptModifier != null) {
+		cptWithModifier = cptWithModifier + ":" + svc.cptModifier;
+	}
+
 	svcData = svcData.replaceAll("{{provider_ctl_no}}", providerCtlNo);
-	svcData = svcData.replaceAll("{{cpt_code}}", svc.cptCode);
+	svcData = svcData.replaceAll("{{cpt_code}}", cptWithModifier);
 	svcData = svcData.replaceAll("{{cpt_charge}}", svc.cptCharge);
 	svcData = svcData.replaceAll("{{num_units}}", svc.units);
 	svcData = svcData.replaceAll("{{date_of_service}}", svc.dateOfService);
@@ -1613,6 +1660,20 @@ function getNumSegments(claimData) {
 function formatCost(costInt) {
 	const dollars = costInt / 100;
 	return dollars.toFixed(2).toString();
+}
+
+let facilityTypeCodeMapping = {
+	"Main Office": "11",
+	Telehealth: "02",
+	"Patient's Residence": "12",
+	"Other Location": "99",
+};
+
+function placeOfServiceToFacilityCode(placeOfService) {
+	if (typeof facilityTypeCodeMapping[placeOfService] === "undefined") {
+		throw Error("Failed to locate place of service. Got: ", placeOfService);
+	}
+	return facilityTypeCodeMapping[placeOfService];
 }
 
 api.listen(port, () => {
