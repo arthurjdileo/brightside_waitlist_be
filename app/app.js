@@ -607,6 +607,17 @@ api.post("/receiveNotify", jsonParser, async (req, res) => {
 	// add entry to appts db with patient ID, appt datetime, clinician
 });
 
+function getSubscriberRelation(relation) {
+	let normalized = relation.toLowerCase().trim();
+	if (normalized == "self" || normalized == "spouse" || normalized == "child") {
+		return normalized;
+	} else if (normalized == "life partner") {
+		return "lifepartner";
+	} else {
+		return "other";
+	}
+}
+
 api.post("/eligibility", jsonParser, async (req, res) => {
 	if (req.method === "OPTIONS") {
 		// Send response to OPTIONS requests
@@ -800,6 +811,12 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 					? eligibility?.HBPC_Deductible_OOP_Summary
 							?.FamilyDeductibleRemainingInNet?.Notes
 					: "",
+				subscriberRelationship: eligibility?.PlanCoverageSummary
+					?.SubscriberRelationship
+					? getSubscriberRelation(
+							eligibility?.PlanCoverageSummary?.SubscriberRelationship
+					  )
+					: "other",
 			};
 
 			console.log(`Returning payload: ${JSON.stringify(resp)}`);
