@@ -767,6 +767,12 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 				subscriber: eligibility?.DemographicInfo.Subscriber.FullName
 					? eligibility?.DemographicInfo.Subscriber.FullName
 					: fname + " " + lname,
+				subscriberFirst: eligibility?.DemographicInfo.Subscriber.Firstname
+					? eligibility?.DemographicInfo.Subscriber.Firstname
+					: fname,
+				subscriberLast: eligibility?.DemographicInfo.Subscriber.Lastname_R
+					? eligibility?.DemographicInfo.Subscriber.Lastname_R
+					: lname,
 				indivDeductibleInNet: eligibility?.HBPC_Deductible_OOP_Summary
 					?.IndividualDeductibleInNet?.Value
 					? eligibility?.HBPC_Deductible_OOP_Summary?.IndividualDeductibleInNet
@@ -1295,7 +1301,7 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	claimData += "\n";
 
 	// generate header and footer
-	let header = await fillHeaderTemplate(isn, insurance);
+	let header = await fillHeaderTemplate(isn, insurance, patient);
 	let footer = await addFooter(isn);
 
 	claimData = header + "\n" + claimData + footer;
@@ -1466,16 +1472,29 @@ async function fetchClaimTemplate(template_name) {
 }
 
 async function fillPtTemplate(session, patient, insurance) {
-	let template = await fetchClaimTemplate("ptTemplate");
+	let template;
+	if (patient.relationshipToInsured == "self") {
+		template = await fetchClaimTemplate("ptTemplateSelf");
+	} else {
+		template = await fetchClaimTemplate("ptTemplateOther");
+	}
 	let ptData = template;
 
 	ptData = ptData.replaceAll("{{pt_last}}", session.lastName.toUpperCase());
 	ptData = ptData.replaceAll("{{pt_first}}", session.firstName.toUpperCase());
-	ptData = ptData.replaceAll("{{group_name}}", patient.groupName);
+	ptData = ptData.replaceAll(
+		"{{sub_last}}",
+		session.subscriber.split(" ").slice(1).join(" ")
+	);
+	ptData = ptData.replaceAll(
+		"{{sub_first}}",
+		session.subscriber.split(" ")[0].toUpperCase()
+	);
+	ptData = ptData.replaceAll("{{group_name}}", patient.groupName.toUpperCase());
 	ptData = ptData.replaceAll("{{claim_ind_code}}", insurance.indCode);
 	ptData = ptData.replaceAll("{{member_id}}", patient.memberID);
-	ptData = ptData.replaceAll("{{pt_st_addr}}", session.street);
-	ptData = ptData.replaceAll("{{pt_city}}", session.city);
+	ptData = ptData.replaceAll("{{pt_st_addr}}", session.street.toUpperCase());
+	ptData = ptData.replaceAll("{{pt_city}}", session.city.toUpperCase());
 	ptData = ptData.replaceAll("{{pt_state}}", session.state);
 	ptData = ptData.replaceAll("{{pt_zip}}", session.zipCode);
 	ptData = ptData.replaceAll(
@@ -1576,7 +1595,7 @@ async function fillSvcTemplate(svc, providerCtlNo) {
 	return svcData;
 }
 
-async function fillHeaderTemplate(isn, insurance) {
+async function fillHeaderTemplate(isn, insurance, patient) {
 	let template = await fetchClaimTemplate("headerTemplate");
 	let header = template;
 
@@ -1595,6 +1614,10 @@ async function fillHeaderTemplate(isn, insurance) {
 	header = header.replaceAll("{{HHMM_24hr_ss}}", formattedTime);
 	header = header.replaceAll("{{isn}}", isn);
 	header = header.replaceAll("{{YYYYMMDD}}", formattedDate);
+	header = header.replaceAll(
+		"{{is_pt_dep}}",
+		patient.relationshipToInsured != "self" ? "1" : "0"
+	);
 
 	return header;
 }
