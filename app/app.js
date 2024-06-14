@@ -1207,6 +1207,7 @@ api.post("/admin/users/:uid", jsonParser, async (req, res) => {
 });
 
 function getLastNameId(str) {
+	str = stripNonAlphanumeric(str);
 	if (str.length < 3) {
 		return str.toUpperCase();
 	}
@@ -1501,8 +1502,14 @@ async function fillPtTemplate(session, patient, insurance) {
 	}
 	let ptData = template;
 
-	ptData = ptData.replaceAll("{{pt_last}}", patient.lastName.toUpperCase());
-	ptData = ptData.replaceAll("{{pt_first}}", patient.firstName.toUpperCase());
+	ptData = ptData.replaceAll(
+		"{{pt_last}}",
+		stripNonAlphanumeric(patient.lastName.toUpperCase())
+	);
+	ptData = ptData.replaceAll(
+		"{{pt_first}}",
+		stripNonAlphanumeric(patient.firstName.toUpperCase())
+	);
 	ptData = ptData.replaceAll(
 		"{{sub_last}}",
 		patient.subscriberLast.toUpperCase()
@@ -1544,7 +1551,7 @@ async function fillPtTemplate(session, patient, insurance) {
 // https://med.noridianmedicare.com/web/jea/topics/claim-submission/patient-relationship-codes
 let relationshipCodeMapping = {
 	self: "18",
-	spouse: "1",
+	spouse: "01",
 	child: "19",
 	lifepartner: "29",
 	other: "G8",
