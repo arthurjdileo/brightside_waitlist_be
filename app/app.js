@@ -1206,20 +1206,35 @@ api.post("/admin/users/:uid", jsonParser, async (req, res) => {
 	}
 });
 
+function getLastNameId(str) {
+	if (str.length < 3) {
+		return str.toUpperCase();
+	}
+	return str.substring(0, 3).toUpperCase();
+}
+
+function stripNonAlphanumeric(str) {
+	return str.replace(/[^a-zA-Z0-9 ]/g, "");
+}
+
 // claims
 api.post("/submit_claim", jsonParser, async (req, res) => {
 	//auth
-	// if (
-	// 	!req.headers.authorization ||
-	// 	req.headers.authorization.split(" ").length === 0
-	// ) {
-	// 	res.status(403).send({ success: false });
-	// 	return;
-	// }
-	// if (!req.body.claims || req.body.claims.length == 0) {
-	// 	res.status(400).send("");
-	// 	return;
-	// }
+	if (
+		!req.headers.authorization ||
+		req.headers.authorization.split(" ").length === 0
+	) {
+		res.status(403).send({ success: false });
+		return;
+	}
+	if (!req.body.sessionId) {
+		res.status(400).send("");
+		return;
+	}
+	if (req.headers.authorization != "ajdielo123324345sasdsdfg") {
+		res.status(403).send({ success: false });
+		return;
+	}
 	// const token = req.headers.authorization.split(" ")[1];
 	// let userEmail = null;
 	// let user = null;
@@ -1256,6 +1271,9 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	const dateOfService = formatDate(session.dateOfService, true);
 
 	const patient = await fetchPatient(session.patient);
+	const clinician = await fetchProvider(
+		req.body.clinicianId ? req.body.clinicianId : session.clinician
+	);
 	const insurance = await fetchInsurance(patient.payerId);
 
 	// this is the raw claim data without header/footer
@@ -1267,7 +1285,9 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	claimData += "\n";
 
 	// generate unique ID for claim
-	const providerCtlNo = await fetchAndIncrementProviderCtlNo();
+	let providerCtlNo = await fetchAndIncrementProviderCtlNo();
+	// add first bit of lastName to include
+	providerCtlNo = getLastNameId(patient.lastName) + providerCtlNo;
 	const claimNo = await fetchAndIncrementClaimNo();
 
 	// now every claim has billable activities
@@ -1277,7 +1297,8 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 		insurance,
 		cptInfo,
 		claimNo,
-		providerCtlNo
+		providerCtlNo,
+		clinician
 	);
 	claimData += "\n";
 
@@ -1312,7 +1333,7 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	let claimFileUUID = uuidv4();
 
 	console.log(claimData);
-	res.sendStatus(200);
+	res.status(200).json(claimData);
 });
 
 async function lookupCPT(cptCode) {
@@ -1372,9 +1393,9 @@ async function fetchAndIncrementProviderCtlNo() {
 			let metadata = doc.data();
 			let pcnInt = metadata.next_providerCtlNo;
 			// icn is 9 digit unique no that wraps
-			pcn = pcnInt.toString().padStart(6, "0");
+			pcn = pcnInt.toString().padStart(8, "0");
 			pcnInt++;
-			if (pcnInt == 999999) {
+			if (pcnInt == 99999999) {
 				pcnInt = 0;
 			}
 
@@ -1404,7 +1425,7 @@ async function fetchAndIncrementClaimNo() {
 			// icn is 9 digit unique no that wraps
 			pcn = pcnInt.toString().padStart(15, "0");
 			pcnInt++;
-			if (pcnInt == 999999) {
+			if (pcnInt == 999999999999999) {
 				pcnInt = 0;
 			}
 
@@ -1480,36 +1501,41 @@ async function fillPtTemplate(session, patient, insurance) {
 	}
 	let ptData = template;
 
-	ptData = ptData.replaceAll("{{pt_last}}", session.lastName.toUpperCase());
-	ptData = ptData.replaceAll("{{pt_first}}", session.firstName.toUpperCase());
+	ptData = ptData.replaceAll("{{pt_last}}", patient.lastName.toUpperCase());
+	ptData = ptData.replaceAll("{{pt_first}}", patient.firstName.toUpperCase());
 	ptData = ptData.replaceAll(
 		"{{sub_last}}",
-		session.subscriber.split(" ").slice(1).join(" ")
+		patient.subscriberLast.toUpperCase()
 	);
 	ptData = ptData.replaceAll(
 		"{{sub_first}}",
-		session.subscriber.split(" ")[0].toUpperCase()
+		patient.subscriberFirst.toUpperCase()
 	);
-	ptData = ptData.replaceAll("{{group_name}}", patient.groupName.toUpperCase());
+	ptData = ptData.replaceAll(
+		"{{group_name}}",
+		patient.groupName != "N/A"
+			? stripNonAlphanumeric(patient.groupName.toUpperCase())
+			: ""
+	);
 	ptData = ptData.replaceAll("{{claim_ind_code}}", insurance.indCode);
 	ptData = ptData.replaceAll("{{member_id}}", patient.memberID);
-	ptData = ptData.replaceAll("{{pt_st_addr}}", session.street.toUpperCase());
-	ptData = ptData.replaceAll("{{pt_city}}", session.city.toUpperCase());
-	ptData = ptData.replaceAll("{{pt_state}}", session.state);
-	ptData = ptData.replaceAll("{{pt_zip}}", session.zipCode);
+	ptData = ptData.replaceAll("{{pt_st_addr}}", patient.street.toUpperCase());
+	ptData = ptData.replaceAll("{{pt_city}}", patient.city.toUpperCase());
+	ptData = ptData.replaceAll("{{pt_state}}", patient.state);
+	ptData = ptData.replaceAll("{{pt_zip}}", patient.zipCode);
 	ptData = ptData.replaceAll(
 		"{{patient_relate}}",
 		relationToSubToEdi(patient.relationshipToInsured)
 	);
-	ptData = ptData.replaceAll("{{payer_name}}", insurance.name);
+	ptData = ptData.replaceAll("{{payer_name}}", insurance.name.toUpperCase());
 	ptData = ptData.replaceAll("{{payer_id}}", insurance.inovalonCode);
 	ptData = ptData.replaceAll(
 		"{{pt_dob_YYYYMMDD}}",
-		session.dob.replaceAll("-", "")
+		patient.dob.replaceAll("-", "")
 	);
 	ptData = ptData.replaceAll(
 		"{{pt_gender_MF}}",
-		session.gender.charAt(0).toUpperCase()
+		patient.gender.charAt(0).toUpperCase()
 	);
 
 	return ptData;
@@ -1539,12 +1565,11 @@ async function fillClmTemplate(
 	insurance,
 	cptInfo,
 	claimNo,
-	providerCtlNo
+	providerCtlNo,
+	clinician
 ) {
 	let template = await fetchClaimTemplate("clmTemplate");
 	let clmData = template;
-
-	let clinician = await fetchProvider(session.clinician);
 
 	clmData = clmData.replaceAll("{{provider_ctl_no}}", providerCtlNo);
 	clmData = clmData.replaceAll(
