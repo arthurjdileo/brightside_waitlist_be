@@ -653,7 +653,7 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 			"Capital Blue Cross": "00060",
 			Cigna: "00510",
 			"Independence Blue Cross": "00115",
-			Highmark: "01136",
+			Highmark: "00050",
 			Magellan: "00676",
 			Optum: "UHG007",
 			"United Healthcare": "00192",
@@ -1275,7 +1275,14 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	const clinician = await fetchProvider(
 		req.body.clinicianId ? req.body.clinicianId : session.clinician
 	);
-	const insurance = await fetchInsurance(patient.payerId);
+	let insurance;
+	try {
+		insurance = await fetchInsurance(patient.payerId);
+	} catch (err) {
+		console.error(err);
+		res.status(500).json({ success: false, error: "invalid payerID" });
+		return;
+	}
 
 	// this is the raw claim data without header/footer
 	let claimData = "";
@@ -1333,7 +1340,6 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 
 	let claimFileUUID = uuidv4();
 
-	console.log(claimData);
 	res.status(200).json(claimData);
 });
 
