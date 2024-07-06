@@ -1865,7 +1865,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 
 		authTokenResp = await axios.request(config);
 		if (authTokenResp.status != 200) {
-			console.error("Failed to fetch inovalon auth token", authTokenResp.data);
+			console.error("Failed to fetch inovalon auth token", authTokenResp?.data);
 			res.status(500).json({
 				success: false,
 				error: "Failed to submit claims",
@@ -1876,7 +1876,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		console.error(
 			"Failed to fetch inovalon auth token",
 			err,
-			authTokenResp.data
+			authTokenResp?.data
 		);
 		res.status(500).json({
 			success: false,
@@ -1903,7 +1903,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 
 		claimUploadResp = await axios.request(config);
 		if (claimUploadResp.status != 201) {
-			console.error("Failed to upload to invalon", claimUploadResp.data);
+			console.error("Failed to upload to invalon", claimUploadResp?.data);
 			res.status(500).json({
 				success: false,
 				error: "Failed to submit claims",
@@ -1911,7 +1911,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 			return;
 		}
 	} catch (err) {
-		console.error("Failed to upload to invalon", claimUploadResp.data);
+		console.error("Failed to upload to invalon", err, claimUploadResp?.data);
 		res.status(500).json({
 			success: false,
 			error: "Failed to submit claims",
@@ -1942,7 +1942,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		totalCharge: totalCharge,
 	});
 
-	res.status(200).json(claimData);
+	res.status(200).json({ success: true });
 });
 
 /**
@@ -2073,17 +2073,6 @@ async function fetchAndIncrementClaimNo() {
 		});
 	});
 	return pcn;
-}
-
-async function fetchSession(sessionId) {
-	const docRef = await db.collection("sessions").doc(sessionId).get();
-	if (!docRef.exists) {
-		console.error("FAILED TO FIND SESSION FOR ", sessionId);
-		throw new Error("session does not exist", sessionId);
-	}
-
-	const docData = docRef.data();
-	return docData;
 }
 
 async function fetchPatient(patientId) {
