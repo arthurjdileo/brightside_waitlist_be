@@ -13,6 +13,7 @@ const axios = require("axios");
 const cors = require("cors");
 let bodyParser = require("body-parser");
 const jsonParser = bodyParser.json({ limit: "25mb" });
+const qs = require("qs");
 
 const port = process.env.PORT || 8080;
 
@@ -1841,6 +1842,86 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 
 	let numSegments = getNumSegments(claimData);
 	claimData = fillFooter(claimData, numSegments);
+
+	// send to inovalon
+	let authTokenResp;
+	try {
+		let qsData = qs.stringify({
+			grant_type: "password",
+			username: process.env.INOVALON_USERNAME,
+			password: process.env.INOVALON_PASSWORD,
+			scope: "openid ability:accessapi",
+		});
+		let config = {
+			method: "post",
+			maxBodyLength: Infinity,
+			url: "https://idp.myabilitynetwork.com/connect/token",
+			headers: {
+				Authorization: `Basic ${process.env.INOVALON_CREDS_B64}`,
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			data: qsData,
+		};
+
+		authTokenResp = await axios.request(config);
+		if (authTokenResp.status != 200) {
+			console.error("Failed to fetch inovalon auth token", authTokenResp.data);
+			res.status(500).json({
+				success: false,
+				error: "Failed to submit claims",
+			});
+			return;
+		}
+	} catch (err) {
+		console.error(
+			"Failed to fetch inovalon auth token",
+			err,
+			authTokenResp.data
+		);
+		res.status(500).json({
+			success: false,
+			error: "Failed to submit claims",
+		});
+		return;
+	}
+
+	let authToken = authTokenResp.data.access_token;
+
+	let claimUploadResp;
+	try {
+		let config = {
+			method: "post",
+			maxBodyLength: Infinity,
+			url: "https://api.abilitynetwork.com/v1/claims/batch",
+			headers: {
+				Authorization: `Bearer ${authToken}`,
+				"Content-Type": "application/edi-x12",
+				"X-Request-Mode": "P",
+			},
+			data: claimData,
+		};
+
+		claimUploadResp = await axios.request(config);
+		if (claimUploadResp.status != 201) {
+			console.error("Failed to upload to invalon", claimUploadResp.data);
+			res.status(500).json({
+				success: false,
+				error: "Failed to submit claims",
+			});
+			return;
+		}
+	} catch (err) {
+		console.error("Failed to upload to invalon", claimUploadResp.data);
+		res.status(500).json({
+			success: false,
+			error: "Failed to submit claims",
+		});
+		return;
+	}
+
+	console.log(
+		`Successfully submitted ${submitted.length} claim(s): ${submissionBatchId}`
+	);
 
 	// save ctl no back to session
 	for (let sessionId of submitted) {
