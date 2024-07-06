@@ -627,14 +627,20 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 		return;
 	}
 
+	let [status, resp] = await runEligibility(
+		req.body.fname,
+		req.body.lname,
+		req.body.dob,
+		req.body.provider,
+		req.body.memberID
+	);
+
+	res.status(status).json(resp);
+});
+
+async function runEligibility(fname, lname, dob, p, memberID) {
 	let body = `Client_Id=${process.env.PVERIFY_CLIENT_ID}&client_secret=${process.env.PVERIFY_SECRET}&grant_type=client_credentials`;
 	try {
-		let fname = req.body.fname;
-		let lname = req.body.lname;
-		let dob = req.body.dob;
-		let p = req.body.provider;
-		let memberID = req.body.memberID;
-
 		let translate = {
 			Aetna: "00001",
 			"AmeriHealth (DE, NJ, PA)": "000929",
@@ -666,7 +672,7 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 			"Highmark Blue Cross": "S001",
 		};
 		console.log("Got Eligibility Query");
-		console.log(req.body);
+		console.log(fname, lname, dob, p, memberID);
 
 		let payload = await axios.post(
 			`https://api.pverify.com/Token`,
@@ -686,8 +692,7 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 			let resp = {
 				status: "Failed",
 			};
-			res.status(400).send(resp);
-			return;
+			return [400, resp];
 		}
 
 		body = {
@@ -827,20 +832,21 @@ api.post("/eligibility", jsonParser, async (req, res) => {
 
 			console.log(`Returning payload: ${JSON.stringify(resp)}`);
 			console.log(`Elapsed: ${new Date().getTime() - ts.getTime()}ms.`);
-			res.send(resp);
+			return [200, resp];
 		} catch (err) {
 			let resp = {
 				status: "Failed",
 			};
 			console.error("GOT ERROR: ", err);
 			console.log(`Returning payload: ${JSON.stringify(resp)}`);
-			res.status(500).send(resp);
+			return [500, resp];
 		}
 	} catch (err) {
 		console.error(err.message);
-		res.status(500).send({ status: "Failed" });
+		let resp = { status: "Failed" };
+		return [500, resp];
 	}
-});
+}
 
 api.post("/sendNotify", jsonParser, async (req, res) => {
 	//auth
@@ -1218,6 +1224,314 @@ function stripNonAlphanumeric(str) {
 	return str.replace(/[^a-zA-Z0-9 ]/g, "");
 }
 
+function needsEligCheck(date) {
+	const oneMonthAgo = new Date();
+
+	// Set the date to one week ago
+	oneMonthAgo.setHours(oneMonthAgo.getHours() - 24 * 21);
+
+	// Get the timestamp for one month ago
+	const oneMonthAgoTime = oneMonthAgo.getTime();
+
+	// Check if the given date is older than one month ago
+	return date < oneMonthAgoTime;
+}
+
+api.post("/validate_claims", jsonParser, async (req, res) => {
+	//auth
+	if (
+		!req.headers.authorization ||
+		req.headers.authorization.split(" ").length === 0
+	) {
+		res.status(403).send({ success: false });
+		return;
+	}
+	if (!req.body.sessionId) {
+		res.status(400).send("");
+		return;
+	}
+	if (req.headers.authorization != "ajdielo123324345sasdsdfg") {
+		res.status(403).send({ success: false });
+		return;
+	}
+	// const token = req.headers.authorization.split(" ")[1];
+	// let userEmail = null;
+	// let user = null;
+	// try {
+	// 	let decoded = await app.auth().verifyIdToken(token, true);
+	// 	userEmail = decoded.email;
+	// 	if (!userEmail) {
+	// 		console.error("Failed to decode token: ", token);
+	// 		res.status(403).send({ success: false });
+	// 		return;
+	// 	}
+	// 	user = await admin.auth().getUserByEmail(userEmail);
+	// 	// todo: add role check
+	// 	if (!user || user.customClaims?.role != "admin") {
+	// 		res.status(403).send({ success: false });
+	// 		return;
+	// 	}
+	// } catch (err) {
+	// 	console.error("Failed to decode token: ", err, token);
+	// 	res.status(403).send({ success: false });
+	// 	return;
+	// }
+
+	// Exclude patient.payer == "Out of Pocket/Other"
+	// on fetch
+
+	const sessions = req.body.sessions;
+
+	let validationMap = {};
+	sessions.map(
+		(s) =>
+			(validationMap[s] = {
+				valid: true,
+			})
+	);
+
+	for (let sessionId of sessions) {
+		let sessionDoc = await db.collection("sessions").doc(sessionId).get();
+		let session = sessionDoc.data();
+		let patientDoc = await db.collection("patients").doc(session.patient).get();
+		let patient = patientDoc.data();
+
+		// only process PA sessions
+		if (session.practiceState != "pa") {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Patient is outside of PA";
+			validationMap[sessionId].type = null;
+			continue;
+		}
+
+		// generic pt/ins check
+		if (patient.payer == "Out of Pocket/Other") {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Patient is out of pocket";
+			validationMap[sessionId].type = null;
+			continue;
+		}
+		if (!patient.dob) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing patient's DOB";
+			validationMap[sessionId].type = "demographic";
+			continue;
+		}
+		if (!patient.payer) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing payer";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+		if (!patient.memberID) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing patient's member ID";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+		if (!patient.city || patient.city.includes("N/A")) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing/Invalid patient city";
+			validationMap[sessionId].type = "demographic";
+			continue;
+		}
+		if (!patient.state || patient.state.includes("N/A")) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing/Invalid patient state";
+			validationMap[sessionId].type = "demographic";
+			continue;
+		}
+		if (!patient.street || patient.street.includes("N/A")) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing/Invalid patient street";
+			validationMap[sessionId].type = "demographic";
+			continue;
+		}
+		if (!patient.gender) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing/Invaid patient gender";
+			validationMap[sessionId].type = "demographic";
+			continue;
+		}
+
+		// do we need to run elig?
+		try {
+			if (
+				!patient.insuranceModified ||
+				needsEligCheck(patient.insuranceModified)
+			) {
+				let [status, resp] = runEligibility(
+					patient.firstName,
+					patient.lastName,
+					patient.dob,
+					patient.payer,
+					patient.memberID
+				);
+
+				if (status != 200) {
+					validationMap[sessionId].valid = false;
+					validationMap[sessionId].reason = "Failed to verify insurance";
+					validationMap[sessionId].type = "insurance";
+					continue;
+				}
+
+				if (resp.data.status == "Inactive") {
+					db.collection("patients").doc(patient.partitionKey).update({
+						insuranceModified: new Date().getTime(),
+						planName: "INACTIVE",
+						groupName: "INACTIVE",
+						copay: "INACTIVE",
+						coInsuranceInNet: "INACTIVE",
+						indivDeductibleInNet: "INACTIVE",
+						indivDeductibleInNetRemaining: "INACTIVE",
+						famDeductibleInNet: "INACTIVE",
+						famDeductibleInNetRemaining: "INACTIVE",
+					});
+					validationMap[sessionId].valid = false;
+					validationMap[sessionId].reason = "Insurance is inactive";
+					validationMap[sessionId].type = "insurance";
+					continue;
+				}
+				if (resp.data.status == "Failed") {
+					validationMap[sessionId].valid = false;
+					validationMap[sessionId].reason =
+						"Failed to verify insurance information";
+					validationMap[sessionId].type = "insurance";
+					continue;
+				}
+
+				let eligData = resp.data;
+				let relToInsured = patient.relationshipToInsured;
+				if (
+					eligData.subscriberRelationship != "other" &&
+					(!patient.relationshipToInsured ||
+						patient.relationshipToInsured == "other")
+				) {
+					relToInsured = eligData.subscriberRelationship;
+				}
+
+				db.collection("patients")
+					.doc(patient.partitionKey)
+					.update({
+						insuranceModified: new Date().getTime(),
+						coInsuranceInNet: eligData.coInsuranceInNet
+							? eligData.coInsuranceInNet
+							: "N/A",
+						copay: eligData.copay ? eligData.copay : "N/A",
+						famDeductibleInNet: eligData.famDeductibleInNet
+							? eligData.famDeductibleInNet
+							: "N/A",
+						famDeductibleInNetRemaining: eligData.famDeductibleInNetRemaining
+							? eligData.famDeductibleInNetRemaining
+							: "N/A",
+						groupName: eligData.groupName ? eligData.groupName : "N/A",
+						planName: eligData.planName ? eligData.planName : "N/A",
+						indivDeductibleInNet: eligData.indivDeductibleInNet
+							? eligData.indivDeductibleInNet
+							: "N/A",
+						indivDeductibleInNetRemaining:
+							eligData.indivDeductibleInNetRemaining
+								? eligData.indivDeductibleInNetRemaining
+								: "N/A",
+						provider: eligData.provider ? eligData.provider : patient.payer,
+						subscriber: eligData.subscriber ? eligData.subscriber : null,
+						subscriberFirst: eligData.subscriberFirst
+							? eligData.subscriberFirst
+							: null,
+						subscriberLast: eligData.subscriberLast
+							? eligData.subscriberLast
+							: null,
+						payerId: eligData.payerCode,
+						relationshipToInsured: relToInsured,
+					});
+				patient.insuranceModified = new Date().getTime();
+				patient.coInsuranceInNet = eligData.coInsuranceInNet
+					? eligData.coInsuranceInNet
+					: "N/A";
+				patient.copay = eligData.copay ? eligData.copay : "N/A";
+				patient.famDeductibleInNet = eligData.famDeductibleInNet
+					? eligData.famDeductibleInNet
+					: "N/A";
+				patient.famDeductibleInNetRemaining =
+					eligData.famDeductibleInNetRemaining
+						? eligData.famDeductibleInNetRemaining
+						: "N/A";
+				patient.groupName = eligData.groupName ? eligData.groupName : "N/A";
+				patient.planName = eligData.planName ? eligData.planName : "N/A";
+				patient.indivDeductibleInNet = eligData.indivDeductibleInNet
+					? eligData.indivDeductibleInNet
+					: "N/A";
+				patient.indivDeductibleInNetRemaining =
+					eligData.indivDeductibleInNetRemaining
+						? eligData.indivDeductibleInNetRemaining
+						: "N/A";
+				patient.provider = eligData.provider
+					? eligData.provider
+					: patient.payer;
+				patient.subscriber = eligData.subscriber ? eligData.subscriber : null;
+				patient.subscriberFirst = eligData.subscriberFirst
+					? eligData.subscriberFirst
+					: null;
+				patient.subscriberLast = eligData.subscriberLast
+					? eligData.subscriberLast
+					: null;
+				patient.payerId = eligData.payerCode;
+				patient.relationshipToInsured = relToInsured;
+			}
+		} catch (err) {
+			console.error(err);
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason =
+				"Failed to verify insurance information";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+
+		if (patient.copay == "INACTIVE") {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Insurance is inactive";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+
+		if (patient.groupName == "N/A") {
+			patient.groupName = " ";
+		}
+
+		// validate verified ins
+		if (!patient.relationshipToInsured) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason =
+				"Missing patient relationship to insured";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+
+		if (!patient.subscriberLast) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing subscriber's last name";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+
+		if (!patient.subscriberFirst) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing subscriber's first name";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+
+		if (!patient.payerId) {
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Missing payer ID";
+			validationMap[sessionId].type = "insurance";
+			continue;
+		}
+	}
+
+	res.status(200).json(validationMap);
+});
+
 // claims
 api.post("/submit_claim", jsonParser, async (req, res) => {
 	//auth
@@ -1258,8 +1572,6 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	// 	res.status(403).send({ success: false });
 	// 	return;
 	// }
-
-	// TODO: DATA VERIFICATION
 
 	// generate unique identifers
 	const isn = await fetchAndIncrementInterchangeCtlNo();
@@ -1337,8 +1649,6 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 
 	let numSegments = getNumSegments(claimData);
 	claimData = fillFooter(claimData, numSegments);
-
-	let claimFileUUID = uuidv4();
 
 	res.status(200).json(claimData);
 });
