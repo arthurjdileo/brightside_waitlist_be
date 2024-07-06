@@ -1529,7 +1529,23 @@ api.post("/validate_claims", jsonParser, async (req, res) => {
 		}
 	}
 
-	res.status(200).json(validationMap);
+	for (let [sessionId, v] of Object.entries(validationMap)) {
+		if (v.valid) {
+			db.collection("sessions").doc(sessionId).update({
+				status: "validated",
+				invalidationReason: null,
+				invalidationType: null,
+			});
+		} else {
+			db.collection("sessions").doc(sessionId).update({
+				status: "action_required",
+				invalidationReason: v.reason,
+				invalidationType: v.type,
+			});
+		}
+	}
+
+	res.sendStatus(200);
 });
 
 // claims
