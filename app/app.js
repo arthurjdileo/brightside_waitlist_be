@@ -1246,58 +1246,80 @@ api.post("/validate_claims", jsonParser, async (req, res) => {
 		res.status(403).send({ success: false });
 		return;
 	}
-	if (!req.body.sessionId) {
+	if (!req.body.sessions) {
 		res.status(400).send("");
 		return;
 	}
-	if (req.headers.authorization != "ajdielo123324345sasdsdfg") {
+
+	const token = req.headers.authorization.split(" ")[1];
+	let userEmail = null;
+	let user = null;
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({ success: false });
+			return;
+		}
+		user = await admin.auth().getUserByEmail(userEmail);
+
+		if (!user) {
+			res.status(403).send({ success: false });
+			return;
+		}
+	} catch (err) {
+		console.error("Failed to decode token: ", err, token);
 		res.status(403).send({ success: false });
 		return;
 	}
-	// const token = req.headers.authorization.split(" ")[1];
-	// let userEmail = null;
-	// let user = null;
-	// try {
-	// 	let decoded = await app.auth().verifyIdToken(token, true);
-	// 	userEmail = decoded.email;
-	// 	if (!userEmail) {
-	// 		console.error("Failed to decode token: ", token);
-	// 		res.status(403).send({ success: false });
-	// 		return;
-	// 	}
-	// 	user = await admin.auth().getUserByEmail(userEmail);
-	// 	// todo: add role check
-	// 	if (!user || user.customClaims?.role != "admin") {
-	// 		res.status(403).send({ success: false });
-	// 		return;
-	// 	}
-	// } catch (err) {
-	// 	console.error("Failed to decode token: ", err, token);
-	// 	res.status(403).send({ success: false });
-	// 	return;
-	// }
-
-	// Exclude patient.payer == "Out of Pocket/Other"
-	// on fetch
 
 	const sessions = req.body.sessions;
 
+	validateClaims(sessions);
+
+	res.sendStatus(200);
+});
+
+async function validateClaims(sessions) {
 	let validationMap = {};
-	sessions.map(
-		(s) =>
-			(validationMap[s] = {
-				valid: true,
-			})
-	);
+	let dupMap = {};
 
 	for (let sessionId of sessions) {
 		let sessionDoc = await db.collection("sessions").doc(sessionId).get();
 		let session = sessionDoc.data();
+		// skip if already validated
+		if (session.status == "validated") {
+			continue;
+		}
 		let patientDoc = await db.collection("patients").doc(session.patient).get();
 		let patient = patientDoc.data();
 
-		// only process PA sessions
+		validationMap[sessionId] = {
+			valid: true,
+		};
+
+		if (
+			typeof dupMap[
+				`${patient.partitionKey}_${session.clinician}_${formatDate(
+					session.dateOfService
+				)}`
+			] != "undefined"
+		) {
+			// possible duplicate, same pt + clin on same dos
+			validationMap[sessionId].valid = false;
+			validationMap[sessionId].reason = "Possible duplicate";
+			validationMap[sessionId].type = null;
+			continue;
+		} else {
+			dupMap[
+				`${patient.partitionKey}_${session.clinician}_${formatDate(
+					session.dateOfService
+				)}`
+			] = true;
+		}
 		if (session.practiceState != "pa") {
+			// only process PA sessions
 			validationMap[sessionId].valid = false;
 			validationMap[sessionId].reason = "Patient is outside of PA";
 			validationMap[sessionId].type = null;
@@ -1545,11 +1567,132 @@ api.post("/validate_claims", jsonParser, async (req, res) => {
 		}
 	}
 
-	res.sendStatus(200);
-});
+	return validationMap;
+}
 
 // claims
-api.post("/submit_claim", jsonParser, async (req, res) => {
+// api.post("/submit_claim", jsonParser, async (req, res) => {
+// 	//auth
+// 	if (
+// 		!req.headers.authorization ||
+// 		req.headers.authorization.split(" ").length === 0
+// 	) {
+// 		res.status(403).send({ success: false });
+// 		return;
+// 	}
+// 	if (!req.body.sessionId) {
+// 		res.status(400).send("");
+// 		return;
+// 	}
+// 	if (req.headers.authorization != "ajdielo123324345sasdsdfg") {
+// 		res.status(403).send({ success: false });
+// 		return;
+// 	}
+// 	// const token = req.headers.authorization.split(" ")[1];
+// 	// let userEmail = null;
+// 	// let user = null;
+// 	// try {
+// 	// 	let decoded = await app.auth().verifyIdToken(token, true);
+// 	// 	userEmail = decoded.email;
+// 	// 	if (!userEmail) {
+// 	// 		console.error("Failed to decode token: ", token);
+// 	// 		res.status(403).send({ success: false });
+// 	// 		return;
+// 	// 	}
+// 	// 	user = await admin.auth().getUserByEmail(userEmail);
+// 	// 	// todo: add role check
+// 	// 	if (!user || user.customClaims?.role != "admin") {
+// 	// 		res.status(403).send({ success: false });
+// 	// 		return;
+// 	// 	}
+// 	// } catch (err) {
+// 	// 	console.error("Failed to decode token: ", err, token);
+// 	// 	res.status(403).send({ success: false });
+// 	// 	return;
+// 	// }
+
+// 	// generate unique identifers
+// 	const isn = await fetchAndIncrementInterchangeCtlNo();
+
+// 	// selected claims grouped by patient
+// 	const session = await fetchSession(req.body.sessionId);
+// 	const cptInfo = await lookupCPT(session.cptCodes[0]);
+
+// 	// computed here since tz will always be EST
+// 	const dateOfService = formatDate(session.dateOfService, true);
+
+// 	const patient = await fetchPatient(session.patient);
+// 	const clinician = await fetchProvider(
+// 		req.body.clinicianId ? req.body.clinicianId : session.clinician
+// 	);
+// 	let insurance;
+// 	try {
+// 		insurance = await fetchInsurance(patient.payerId);
+// 	} catch (err) {
+// 		console.error(err);
+// 		res.status(500).json({ success: false, error: "invalid payerID" });
+// 		return;
+// 	}
+
+// 	// this is the raw claim data without header/footer
+// 	let claimData = "";
+
+// 	// generate pt info payload
+// 	// use first as a sample
+// 	claimData += await fillPtTemplate(session, patient, insurance);
+// 	claimData += "\n";
+
+// 	// generate unique ID for claim
+// 	let providerCtlNo = await fetchAndIncrementProviderCtlNo();
+// 	// add first bit of lastName to include
+// 	providerCtlNo = getLastNameId(patient.lastName) + providerCtlNo;
+// 	const claimNo = await fetchAndIncrementClaimNo();
+
+// 	// now every claim has billable activities
+// 	// in the form of service lines
+// 	claimData += await fillClmTemplate(
+// 		session,
+// 		insurance,
+// 		cptInfo,
+// 		claimNo,
+// 		providerCtlNo,
+// 		clinician
+// 	);
+// 	claimData += "\n";
+
+// 	// add delimiter
+// 	claimData += await addSvcLineDelimiter(1);
+
+// 	// for every billable activity for this day "service line"
+// 	let service = {
+// 		cptCode: cptInfo.cptCode,
+// 		cptModifier: null,
+// 		cptCharge: (cptInfo.charge / 100).toString(),
+// 		dateOfService: dateOfService.replaceAll("-", ""),
+// 		units: 1,
+// 		placeOfService: session.placeOfService,
+// 	};
+// 	if (service.placeOfService === "Telehealth") {
+// 		// add modifier for telehealth
+// 		service.cptModifier = "95";
+// 	}
+// 	claimData += await fillSvcTemplate(service, providerCtlNo);
+// 	claimData += "\n";
+
+// 	// generate header and footer
+// 	let header = await fillHeaderTemplate(isn);
+// 	let footer = await addFooter(isn);
+
+// 	claimData = header + "\n" + claimData + footer;
+
+// 	let numSegments = getNumSegments(claimData);
+// 	claimData = fillFooter(claimData, numSegments);
+
+// 	res.status(200).json(claimData);
+// });
+
+// claims
+api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 	//auth
 	if (
 		!req.headers.authorization ||
@@ -1558,7 +1701,7 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 		res.status(403).send({ success: false });
 		return;
 	}
-	if (!req.body.sessionId) {
+	if (!req.body.sessions) {
 		res.status(400).send("");
 		return;
 	}
@@ -1567,7 +1710,7 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 		return;
 	}
 	// const token = req.headers.authorization.split(" ")[1];
-	// let userEmail = null;
+	let userEmail = null;
 	// let user = null;
 	// try {
 	// 	let decoded = await app.auth().verifyIdToken(token, true);
@@ -1589,76 +1732,109 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	// 	return;
 	// }
 
+	await validateClaims(req.body.sessions);
+
+	let ctlNoMap = {};
+	let submissionBatchId = uuidv4();
+
+	let submitted = [];
+
 	// generate unique identifers
 	const isn = await fetchAndIncrementInterchangeCtlNo();
 
-	// selected claims grouped by patient
-	const session = await fetchSession(req.body.sessionId);
-	const cptInfo = await lookupCPT(session.cptCodes[0]);
-
-	// computed here since tz will always be EST
-	const dateOfService = formatDate(session.dateOfService, true);
-
-	const patient = await fetchPatient(session.patient);
-	const clinician = await fetchProvider(
-		req.body.clinicianId ? req.body.clinicianId : session.clinician
-	);
-	let insurance;
-	try {
-		insurance = await fetchInsurance(patient.payerId);
-	} catch (err) {
-		console.error(err);
-		res.status(500).json({ success: false, error: "invalid payerID" });
-		return;
-	}
+	const claims = await fetchClaimsByPatient(req.body.sessions);
+	let totalCharge = 0;
 
 	// this is the raw claim data without header/footer
 	let claimData = "";
+	let hlCounter = 1;
 
-	// generate pt info payload
-	// use first as a sample
-	claimData += await fillPtTemplate(session, patient, insurance);
-	claimData += "\n";
+	let pts = Object.keys(claims);
 
-	// generate unique ID for claim
-	let providerCtlNo = await fetchAndIncrementProviderCtlNo();
-	// add first bit of lastName to include
-	providerCtlNo = getLastNameId(patient.lastName) + providerCtlNo;
-	const claimNo = await fetchAndIncrementClaimNo();
+	for (let i = 0; i < pts.length; i++) {
+		let ptId = pts[i];
+		const patient = await fetchPatient(ptId);
 
-	// now every claim has billable activities
-	// in the form of service lines
-	claimData += await fillClmTemplate(
-		session,
-		insurance,
-		cptInfo,
-		claimNo,
-		providerCtlNo,
-		clinician
-	);
-	claimData += "\n";
+		let insurance;
+		try {
+			insurance = await fetchInsurance(patient.payerId);
+		} catch (err) {
+			console.error(err);
+			res.status(500).json({ success: false, error: "invalid payerID" });
+			return;
+		}
 
-	// add delimiter
-	claimData += await addSvcLineDelimiter(1);
+		// generate pt info payload
+		// use first as a sample
+		claimData += await fillPtTemplate(patient, insurance, ++hlCounter);
+		claimData += "\n";
 
-	// for every billable activity for this day "service line"
-	let service = {
-		cptCode: cptInfo.cptCode,
-		cptModifier: null,
-		cptCharge: (cptInfo.charge / 100).toString(),
-		dateOfService: dateOfService.replaceAll("-", ""),
-		units: 1,
-		placeOfService: session.placeOfService,
-	};
-	if (service.placeOfService === "Telehealth") {
-		// add modifier for telehealth
-		service.cptModifier = "95";
+		// update segment counter if pt sub other
+		if (patient.relationshipToInsured != "self") {
+			// template other
+			hlCounter++;
+		}
+
+		// now for every claim, generate payload
+		// a claim is organized by date of service
+		for (const session of claims[ptId]) {
+			if (session.status != "validated" && session.status != "submitted") {
+				continue;
+			}
+
+			// generate unique ID for claim
+			let providerCtlNo = await fetchAndIncrementProviderCtlNo();
+			// add first bit of lastName to include
+			providerCtlNo = getLastNameId(patient.lastName) + providerCtlNo;
+			// save ctlno
+			ctlNoMap[session.sessionId] = providerCtlNo;
+
+			const cptInfo = await lookupCPT(session.cptCodes[0]);
+			// computed here since tz will always be EST
+			const dateOfService = formatDate(session.dateOfService, true);
+			const clinician = await fetchProvider(session.clinician);
+
+			const claimNo = await fetchAndIncrementClaimNo();
+
+			// now every claim has billable activities
+			// in the form of service lines
+			claimData += await fillClmTemplate(
+				session,
+				insurance,
+				cptInfo,
+				claimNo,
+				providerCtlNo,
+				clinician
+			);
+			claimData += "\n";
+
+			totalCharge += cptInfo.charge;
+
+			// add delimiter
+			claimData += await addSvcLineDelimiter(1);
+
+			// for every billable activity for this day "service line"
+			let service = {
+				cptCode: cptInfo.cptCode,
+				cptModifier: null,
+				cptCharge: (cptInfo.charge / 100).toString(),
+				dateOfService: dateOfService.replaceAll("-", ""),
+				units: 1,
+				placeOfService: session.placeOfService,
+			};
+			if (service.placeOfService === "Telehealth") {
+				// add modifier for telehealth
+				service.cptModifier = "95";
+			}
+			claimData += await fillSvcTemplate(service, providerCtlNo);
+			claimData += "\n";
+
+			submitted.push(session.sessionId);
+		}
 	}
-	claimData += await fillSvcTemplate(service, providerCtlNo);
-	claimData += "\n";
 
 	// generate header and footer
-	let header = await fillHeaderTemplate(isn, insurance, patient);
+	let header = await fillHeaderTemplate(isn);
 	let footer = await addFooter(isn);
 
 	claimData = header + "\n" + claimData + footer;
@@ -1666,8 +1842,56 @@ api.post("/submit_claim", jsonParser, async (req, res) => {
 	let numSegments = getNumSegments(claimData);
 	claimData = fillFooter(claimData, numSegments);
 
+	// save ctl no back to session
+	for (let sessionId of submitted) {
+		db.collection("sessions").doc(sessionId).update({
+			status: "submitted",
+			eClaimNo: ctlNoMap[sessionId],
+			eSubmissionBy: userEmail,
+			eSubmittedTime: new Date().getTime(),
+			eBatchId: submissionBatchId,
+		});
+	}
+
+	db.collection("claims").doc(submissionBatchId).set({
+		created: new Date().getTime(),
+		createdBy: userEmail,
+		batchId: submissionBatchId,
+		sessions: req.body.sessions,
+		totalCharge: totalCharge,
+	});
+
 	res.status(200).json(claimData);
 });
+
+/**
+ * Fetches documents from Firestore given an array of document IDs and aggregates them by the "patient" field.
+ *
+ * @param {string[]} docIds - An array of document IDs to fetch.
+ * @return {Promise<Object[]>} A promise that resolves to an array of document data.
+ */
+async function fetchClaimsByPatient(docIds) {
+	let documents = {};
+
+	for (const docId of docIds) {
+		const docRef = db.collection("sessions").doc(docId);
+		const docSnapshot = await docRef.get();
+
+		if (!docSnapshot.exists) {
+			console.error("FAILED TO FIND CLAIM FOR ", docId);
+			throw new Error("claim does not exist", docId);
+		}
+
+		const docData = docSnapshot.data();
+		if (!Object.keys(documents).includes(docData.patient)) {
+			documents[docData.patient] = [];
+		}
+
+		documents[docData.patient].push(docData);
+	}
+
+	return documents;
+}
 
 async function lookupCPT(cptCode) {
 	if (typeof cptCache[cptCode] != "undefined") {
@@ -1825,7 +2049,7 @@ async function fetchClaimTemplate(template_name) {
 	return docData[template_name];
 }
 
-async function fillPtTemplate(session, patient, insurance) {
+async function fillPtTemplate(patient, insurance, hlCounter) {
 	let template;
 	if (patient.relationshipToInsured == "self") {
 		template = await fetchClaimTemplate("ptTemplateSelf");
@@ -1834,6 +2058,11 @@ async function fillPtTemplate(session, patient, insurance) {
 	}
 	let ptData = template;
 
+	ptData = ptData.replaceAll("{{counter}}", hlCounter);
+	if (patient.relationshipToInsured != "self") {
+		// template other
+		ptData = ptData.replaceAll("{{counter2}}", ++hlCounter);
+	}
 	ptData = ptData.replaceAll(
 		"{{pt_last}}",
 		stripNonAlphanumeric(patient.lastName.toUpperCase())
@@ -1959,16 +2188,13 @@ async function fillSvcTemplate(svc, providerCtlNo) {
 	return svcData;
 }
 
-async function fillHeaderTemplate(isn, insurance, patient) {
+async function fillHeaderTemplate(isn) {
 	let template = await fetchClaimTemplate("headerTemplate");
 	let header = template;
 
 	let date = new Date().getTime();
 	let formattedDate = formatDate(date);
 	let formattedTime = formatTime(date, true);
-
-	header = header.replaceAll("{{payer_name}}", insurance.name);
-	header = header.replaceAll("{{payer_id}}", insurance.inovalonCode);
 
 	header = header.replaceAll("{{YYMMDD}}", formattedDate.substring(2));
 	header = header.replaceAll(
@@ -1978,10 +2204,6 @@ async function fillHeaderTemplate(isn, insurance, patient) {
 	header = header.replaceAll("{{HHMM_24hr_ss}}", formattedTime);
 	header = header.replaceAll("{{isn}}", isn);
 	header = header.replaceAll("{{YYYYMMDD}}", formattedDate);
-	header = header.replaceAll(
-		"{{is_pt_dep}}",
-		patient.relationshipToInsured != "self" ? "1" : "0"
-	);
 
 	return header;
 }
