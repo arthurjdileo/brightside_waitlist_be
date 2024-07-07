@@ -1277,7 +1277,7 @@ api.post("/validate_claims", jsonParser, async (req, res) => {
 
 	const sessions = req.body.sessions;
 
-	validateClaims(sessions);
+	await validateClaims(sessions);
 
 	res.status(200).json({ success: true });
 });
@@ -1309,8 +1309,9 @@ async function validateClaims(sessions) {
 		) {
 			// possible duplicate, same pt + clin on same dos
 			validationMap[sessionId].valid = false;
-			validationMap[sessionId].reason = "Possible duplicate";
-			validationMap[sessionId].type = null;
+			validationMap[sessionId].reason =
+				"This session is a duplicate of another session.";
+			validationMap[sessionId].type = "duplicate";
 			continue;
 		} else {
 			dupMap[
@@ -1398,7 +1399,7 @@ async function validateClaims(sessions) {
 					continue;
 				}
 
-				if (resp.data.status == "Inactive") {
+				if (resp.status == "Inactive") {
 					db.collection("patients").doc(patient.partitionKey).update({
 						insuranceModified: new Date().getTime(),
 						planName: "INACTIVE",
@@ -1415,7 +1416,7 @@ async function validateClaims(sessions) {
 					validationMap[sessionId].type = "insurance";
 					continue;
 				}
-				if (resp.data.status == "Failed") {
+				if (resp.status == "Failed") {
 					validationMap[sessionId].valid = false;
 					validationMap[sessionId].reason =
 						"Failed to verify insurance information";
@@ -1423,7 +1424,7 @@ async function validateClaims(sessions) {
 					continue;
 				}
 
-				let eligData = resp.data;
+				let eligData = resp;
 				let relToInsured = patient.relationshipToInsured;
 				if (
 					eligData.subscriberRelationship != "other" &&
@@ -1920,7 +1921,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 	}
 
 	console.log(
-		`Successfully submitted ${submitted.length} claim(s): ${submissionBatchId}`
+		`${userEmail}: Successfully submitted ${submitted.length} claim(s): ${submissionBatchId}`
 	);
 
 	// save ctl no back to session
@@ -1943,7 +1944,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		totalCharge: totalCharge,
 	});
 
-	res.status(200).json({ success: true });
+	res.status(200).json({ success: true, numSubmitted: submitted.length });
 });
 
 /**
