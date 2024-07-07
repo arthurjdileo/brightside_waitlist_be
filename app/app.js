@@ -1706,32 +1706,32 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		res.status(400).send("");
 		return;
 	}
-	if (req.headers.authorization != "ajdielo123324345sasdsdfg") {
+
+	const token = req.headers.authorization.split(" ")[1];
+	let userEmail = null;
+	let user = null;
+	try {
+		let decoded = await app.auth().verifyIdToken(token, true);
+		userEmail = decoded.email;
+		if (!userEmail) {
+			console.error("Failed to decode token: ", token);
+			res.status(403).send({ success: false });
+			return;
+		}
+		user = await admin.auth().getUserByEmail(userEmail);
+
+		if (
+			!user ||
+			(user.customClaims?.role != "admin" && user.customClaims?.role != "staff")
+		) {
+			res.status(403).send({ success: false });
+			return;
+		}
+	} catch (err) {
+		console.error("Failed to decode token: ", err, token);
 		res.status(403).send({ success: false });
 		return;
 	}
-	// const token = req.headers.authorization.split(" ")[1];
-	let userEmail = null;
-	// let user = null;
-	// try {
-	// 	let decoded = await app.auth().verifyIdToken(token, true);
-	// 	userEmail = decoded.email;
-	// 	if (!userEmail) {
-	// 		console.error("Failed to decode token: ", token);
-	// 		res.status(403).send({ success: false });
-	// 		return;
-	// 	}
-	// 	user = await admin.auth().getUserByEmail(userEmail);
-	// 	// todo: add role check
-	// 	if (!user || user.customClaims?.role != "admin") {
-	// 		res.status(403).send({ success: false });
-	// 		return;
-	// 	}
-	// } catch (err) {
-	// 	console.error("Failed to decode token: ", err, token);
-	// 	res.status(403).send({ success: false });
-	// 	return;
-	// }
 
 	await validateClaims(req.body.sessions);
 
@@ -1902,7 +1902,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		};
 
 		claimUploadResp = await axios.request(config);
-		if (claimUploadResp.status != 201) {
+		if (claimUploadResp.status != 202) {
 			console.error("Failed to upload to invalon", claimUploadResp?.data);
 			res.status(500).json({
 				success: false,
@@ -1938,7 +1938,8 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		created: new Date().getTime(),
 		createdBy: userEmail,
 		batchId: submissionBatchId,
-		sessions: req.body.sessions,
+		sessions: submitted,
+		numSessions: submitted.length,
 		totalCharge: totalCharge,
 	});
 
@@ -2094,6 +2095,9 @@ async function fetchProvider(clinicianId) {
 	}
 
 	const docData = docRef.data();
+	if (typeof docData.supervisor != "undefined") {
+		return fetchProvider(docData.supervisor);
+	}
 	return docData;
 }
 
