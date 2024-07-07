@@ -1734,7 +1734,17 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		return;
 	}
 
-	await validateClaims(req.body.sessions);
+	console.log(
+		"Attempting to submit claims: ",
+		JSON.stringify(req.body.sessions)
+	);
+
+	let validationMap = await validateClaims(req.body.sessions);
+	const validSessionIds = Object.keys(validationMap).filter(
+		(sessionId) => validationMap[sessionId].valid === true
+	);
+
+	console.log("After validation: ", JSON.stringify(validSessionIds));
 
 	let ctlNoMap = {};
 	let submissionBatchId = uuidv4();
@@ -1744,7 +1754,7 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 	// generate unique identifers
 	const isn = await fetchAndIncrementInterchangeCtlNo();
 
-	const claims = await fetchClaimsByPatient(req.body.sessions);
+	const claims = await fetchClaimsByPatient(validSessionIds);
 	let totalCharge = 0;
 
 	// this is the raw claim data without header/footer
