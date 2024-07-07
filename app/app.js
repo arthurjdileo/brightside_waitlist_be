@@ -1761,9 +1761,8 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 		try {
 			insurance = await fetchInsurance(patient.payerId);
 		} catch (err) {
-			console.error(err);
-			res.status(500).json({ success: false, error: "invalid payerID" });
-			return;
+			console.error(ptId, err);
+			continue;
 		}
 
 		// generate pt info payload
