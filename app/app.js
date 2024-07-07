@@ -1229,7 +1229,7 @@ function needsEligCheck(date) {
 	const oneMonthAgo = new Date();
 
 	// Set the date to one week ago
-	oneMonthAgo.setHours(oneMonthAgo.getHours() - 24 * 21);
+	oneMonthAgo.setHours(oneMonthAgo.getHours() - 24 * 14);
 
 	// Get the timestamp for one month ago
 	const oneMonthAgoTime = oneMonthAgo.getTime();
@@ -1248,7 +1248,7 @@ api.post("/validate_claims", jsonParser, async (req, res) => {
 		return;
 	}
 	if (!req.body.sessions) {
-		res.status(400).send("");
+		res.status(400).send({ success: false });
 		return;
 	}
 
@@ -1279,7 +1279,7 @@ api.post("/validate_claims", jsonParser, async (req, res) => {
 
 	validateClaims(sessions);
 
-	res.sendStatus(200);
+	res.status(200).json({ success: true });
 });
 
 async function validateClaims(sessions) {
@@ -1383,7 +1383,7 @@ async function validateClaims(sessions) {
 				!patient.insuranceModified ||
 				needsEligCheck(patient.insuranceModified)
 			) {
-				let [status, resp] = runEligibility(
+				let [status, resp] = await runEligibility(
 					patient.firstName,
 					patient.lastName,
 					patient.dob,
