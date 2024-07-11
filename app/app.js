@@ -1287,6 +1287,9 @@ async function validateClaims(sessions) {
 	let dupMap = {};
 
 	for (let sessionId of sessions) {
+		validationMap[sessionId] = {
+			valid: true,
+		};
 		let sessionDoc = await db.collection("sessions").doc(sessionId).get();
 		let session = sessionDoc.data();
 		// skip if already validated
@@ -1295,10 +1298,6 @@ async function validateClaims(sessions) {
 		}
 		let patientDoc = await db.collection("patients").doc(session.patient).get();
 		let patient = patientDoc.data();
-
-		validationMap[sessionId] = {
-			valid: true,
-		};
 
 		if (
 			typeof dupMap[
@@ -1740,9 +1739,19 @@ api.post("/submit_claims_bulk", jsonParser, async (req, res) => {
 	);
 
 	let validationMap = await validateClaims(req.body.sessions);
+	console.log(JSON.stringify(validationMap));
 	const validSessionIds = Object.keys(validationMap).filter(
 		(sessionId) => validationMap[sessionId].valid === true
 	);
+
+	if (validSessionIds.length === 0) {
+		console.log("All sessions are not valid.");
+		res.status(400).json({
+			success: false,
+			error: "Failed to submit claims",
+		});
+		return;
+	}
 
 	console.log("After validation: ", JSON.stringify(validSessionIds));
 
